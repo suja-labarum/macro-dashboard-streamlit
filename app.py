@@ -7843,7 +7843,7 @@ def render_sentiment_framework(mkt, opts, skew_idx, fg, aaii, vix_term,
         except Exception:
             aaii_pct_rank = None
 
-    sub_scores = list(filter(None.__ne__, [
+    raw_sub_scores = [
         safe_norm(vix_val, 10, 80),
         safe_norm(vvix_val, 80, 180),
         safe_norm(fg_val, 0, 100, invert=True),
@@ -7852,7 +7852,15 @@ def render_sentiment_framework(mkt, opts, skew_idx, fg, aaii, vix_term,
         safe_norm(move_val, 60, 200),
         safe_norm(vrp_val, -5, 30),
         panic_score,
-    ]))
+    ]
+    sub_scores = []
+    for score in raw_sub_scores:
+        if score is None:
+            continue
+        try:
+            sub_scores.append(float(score))
+        except Exception:
+            continue
     composite_fear = round(sum(sub_scores) / len(sub_scores), 2) if sub_scores else None
 
     if composite_fear is not None:
