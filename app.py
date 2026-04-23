@@ -575,7 +575,7 @@ FRED_SERIES = {
     "WRMFNS"         : ("Institutional Money Market Fund Assets", "Institutional", "B"),
     "BOGZ1FL653064100Q": ("Mutual Fund Total Equity Assets",      "Institutional", "B"),
     "DTWEXBGS"       : ("USD Broad Trade-Weighted Index",         "CTA",           "idx"),
-    "UMCSENT"        : ("UMich Consumer Sentiment",      "Sentiment", "idx"),
+    "UMCSENT"        : ("University of Michigan Consumer Sentiment Index", "Sentiment", "idx"),
     "RSXFS"          : ("Retail Sales (ex-Auto)",        "Consumer",  "$B"),
     "DSPIC96"        : ("Real Disposable Income",        "Consumer",  "$B"),
     "PSAVERT"        : ("Personal Savings Rate",         "Labor/Consumer", "%"),
@@ -3706,7 +3706,7 @@ def render_tab_summary(tab_key, fred, treasury=None, mkt=None, fg=None, naaim=No
             delta_color="inverse" if m2_yoy is not None and m2_yoy < 0 else "normal",
         )
         k[3].metric(
-            "UMich Consumer Sentiment",
+            "University of Michigan Consumer Sentiment Index",
             f"{umich:.1f}" if umich is not None else "N/A",
             delta=f"{umich_delta:+.1f} vs prior" if umich_delta is not None else None,
         )
@@ -10926,7 +10926,7 @@ def main():
             with lc2:
                 st.subheader("🛒 Consumer & Spending")
                 consumer_items = [
-                    ("UMCSENT","Consumer Sentiment","idx"),
+                    ("UMCSENT","University of Michigan Consumer Sentiment Index","idx"),
                     ("RSXFS","Retail Sales (ex-Auto)","$B"),
                     ("DSPIC96","Real Disposable Income","$B"),
                     ("PSAVERT","Personal Savings Rate","%"),
@@ -10972,7 +10972,7 @@ def main():
                 delta_color="normal" if real_wage is not None and real_wage > 0 else "inverse",
             )
             e3.metric(
-                "UMich Consumer Sentiment",
+                "University of Michigan Consumer Sentiment Index",
                 f"{umich_v:.1f}" if umich_v is not None else "N/A",
                 delta=f"{umich_delta:+.1f} vs prior month" if umich_delta is not None else None,
             )
@@ -11063,6 +11063,37 @@ def main():
                         thresholds=[(20,"#34d399"),(28,"#86efac"),(35,"#fbbf24"),(45,"#f87171")],
                     )
                     st.plotly_chart(fig_cape, use_container_width=True, key="chart_cape_gauge")
+
+            st.subheader("University of Michigan Consumer Sentiment Index")
+            st.caption(
+                "Monthly survey of U.S. household confidence. Lower readings mean consumers feel worse about "
+                "personal finances and the economy; higher readings support spending resilience."
+            )
+            umich_v = _get_val(fred, "UMCSENT")
+            umich_delta = _hist_latest_delta(fred, "UMCSENT_HIST", periods=1)
+            umich_avg = _hist_average(fred, "UMCSENT_HIST", periods=12)
+            u1, u2 = st.columns([0.35, 0.65])
+            with u1:
+                st.metric(
+                    "University of Michigan Consumer Sentiment Index",
+                    f"{umich_v:.1f}" if umich_v is not None else "N/A",
+                    delta=f"{umich_delta:+.1f} vs prior month" if umich_delta is not None else None,
+                    help="FRED series UMCSENT. Below 60 is weak household confidence; above 80 is healthier sentiment.",
+                )
+                if umich_v is not None and umich_avg is not None:
+                    st.caption(f"12-month average: {umich_avg:.1f}")
+            with u2:
+                st.plotly_chart(
+                    make_fred_history_line_chart(
+                        fred,
+                        "UMCSENT_HIST",
+                        "University of Michigan Consumer Sentiment Index — 36-Month History",
+                        "Index",
+                        "#3b82f6",
+                    ),
+                    use_container_width=True,
+                    key="chart_markets_umich_sentiment",
+                )
 
             st.subheader("Capital Flow Signal")
             st.caption(
