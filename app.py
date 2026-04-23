@@ -1269,9 +1269,113 @@ def fetch_vix_term_structure():
         return []
 
 
+@st.cache_data(ttl="5m")
+def fetch_put_call_ratio_live():
+    """
+    Fetch current intraday put/call ratio from a public CBOE-derived table.
+
+    TradingView symbol USI:PCC is useful visually, but TradingView does not provide
+    a stable public data API for dashboard ingestion. This source exposes the same
+    broad concept directly as HTML tables: total, index, and equity options PCR.
+    """
+    try:
+        import warnings
+
+        def _fetch_text(url, timeout=12):
+            try:
+                return _http_get_text(url, timeout=timeout)
+            except Exception:
+                if not _USE_REQUESTS:
+                    return ""
+                try:
+                    from urllib3.exceptions import InsecureRequestWarning
+                    warnings.simplefilter("ignore", InsecureRequestWarning)
+                except Exception:
+                    pass
+                r = _requests.get(
+                    url,
+                    timeout=timeout,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    verify=False,
+                )
+                r.raise_for_status()
+                return r.text
+
+        def _parse_table(kind, label):
+            html = _fetch_text(f"https://putcallratio.org/data/_data{kind}.html")
+            dfs = pd.read_html(io.StringIO(html))
+            if not dfs:
+                return None
+            df = dfs[0].copy()
+            df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+            ratio_col = next((c for c in df.columns if "ratio" in c), None)
+            if ratio_col is None or "time" not in df.columns:
+                return None
+            df[ratio_col] = pd.to_numeric(df[ratio_col], errors="coerce")
+            df = df.dropna(subset=[ratio_col])
+            if df.empty:
+                return None
+            latest = df.iloc[-1]
+            return {
+                "label": label,
+                "time": str(latest.get("time", "")),
+                "calls": int(float(latest.get("calls", 0) or 0)),
+                "puts": int(float(latest.get("puts", 0) or 0)),
+                "total": int(float(latest.get("total", 0) or 0)),
+                "pcr": round(float(latest[ratio_col]), 2),
+                "intraday": [
+                    {
+                        "time": str(r.get("time", "")),
+                        "pcr": round(float(r[ratio_col]), 2),
+                    }
+                    for _, r in df.iterrows()
+                    if pd.notna(r.get(ratio_col))
+                ],
+            }
+
+        total = _parse_table("total", "Total Options")
+        index = _parse_table("index", "Index Options")
+        equity = _parse_table("equity", "Equity Options")
+        if not total and not index and not equity:
+            return None
+
+        last_update = None
+        try:
+            update_html = _fetch_text("https://putcallratio.org/data/_lastupdate.html")
+            m = re.search(r"Last update:\s*([^<]+)", update_html, re.I)
+            if m:
+                last_update = m.group(1).strip()
+        except Exception:
+            pass
+
+        primary = total or equity or index
+        return {
+            "value": primary.get("pcr"),
+            "time": primary.get("time"),
+            "date": str(datetime.date.today()),
+            "last_update": last_update,
+            "source": "PutCallRatio.org CBOE-derived intraday total options PCR",
+            "total_options": total,
+            "index_options": index,
+            "equity_options": equity,
+        }
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl="2m")
 def fetch_options_indicators():
-    out = {"pcr": None, "skew_proxy": None, "vvix": None, "gvz": None, "backwardation": False}
+    out = {
+        "pcr": None,
+        "pcr_source": None,
+        "pcr_date": None,
+        "pcr_time": None,
+        "pcr_detail": None,
+        "skew_proxy": None,
+        "vvix": None,
+        "gvz": None,
+        "backwardation": False,
+    }
     try:
         mkt = fetch_market()
         vix = (mkt.get("^VIX") or {}).get("value")
@@ -1291,15 +1395,29 @@ def fetch_options_indicators():
         pass
 
     try:
+        live_pcr = fetch_put_call_ratio_live()
+        if live_pcr and live_pcr.get("value") is not None:
+            out["pcr"] = round(float(live_pcr["value"]), 2)
+            out["pcr_source"] = live_pcr.get("source")
+            out["pcr_date"] = live_pcr.get("date")
+            out["pcr_time"] = live_pcr.get("time") or live_pcr.get("last_update")
+            out["pcr_detail"] = live_pcr
+    except Exception:
+        pass
+
+    try:
         import yfinance as yf
-        spy = yf.Ticker("SPY")
-        expiries = spy.options
-        if expiries:
-            chain = spy.option_chain(expiries[0])
-            call_oi = float(chain.calls["openInterest"].fillna(0).sum())
-            put_oi = float(chain.puts["openInterest"].fillna(0).sum())
-            if call_oi > 0:
-                out["pcr"] = round(put_oi / call_oi, 2)
+        if out.get("pcr") is None:
+            spy = yf.Ticker("SPY")
+            expiries = spy.options
+            if expiries:
+                chain = spy.option_chain(expiries[0])
+                call_oi = float(chain.calls["openInterest"].fillna(0).sum())
+                put_oi = float(chain.puts["openInterest"].fillna(0).sum())
+                if call_oi > 0:
+                    out["pcr"] = round(put_oi / call_oi, 2)
+                    out["pcr_source"] = "Yahoo Finance SPY option-chain open interest fallback"
+                    out["pcr_date"] = str(datetime.date.today())
     except Exception:
         pass
 
@@ -6230,7 +6348,7 @@ def generate_html_report(
     ]
 
     options_rows = [
-        [_esc("PCR"), _esc("N/A" if opts.get("pcr") is None else f"{opts['pcr']:.2f}"), _esc("Options indicators")],
+        [_esc("PCR"), _esc("N/A" if opts.get("pcr") is None else f"{opts['pcr']:.2f}"), _esc(opts.get("pcr_source") or "Options indicators")],
         [_esc("SKEW Index"), _esc("N/A" if skew_idx.get("value") is None else f"{skew_idx['value']:.1f}"), _esc(skew_idx.get("date", ""))],
         [_esc("VVIX"), _esc("N/A" if opts.get("vvix") is None else f"{opts['vvix']:.1f}"), _esc("Yahoo Finance")],
         [_esc("GVZ"), _esc("N/A" if opts.get("gvz") is None else f"{opts['gvz']:.1f}"), _esc("Yahoo Finance")],
@@ -6954,7 +7072,8 @@ def render_options_derivatives(mkt, opts, skew_idx, vix_term, vix_v,
     k1.metric("VIX",        f"{vix_v:.2f}"     if vix_v      is not None else "N/A",
               delta=f"{vix_v - 20:.2f} vs 20"   if vix_v      is not None else None)
     k2.metric("PCR",        f"{pcr:.2f}"        if pcr        is not None else "N/A",
-              delta=f"{pcr - 1.0:+.2f} vs 1.0"  if pcr        is not None else None)
+              delta=f"{pcr - 1.0:+.2f} vs 1.0"  if pcr        is not None else None,
+              help="Primary source is a CBOE-derived intraday total-options put/call ratio; SPY option-chain open interest is used only as a fallback.")
     k3.metric("SKEW Index", f"{skew_value:.1f}" if skew_value is not None else "N/A",
               delta=f"{skew_value - 120:+.1f} vs calm" if skew_value is not None else None)
     k4.metric("VVIX",       f"{vvix:.1f}"       if vvix       is not None else "N/A",
@@ -6973,6 +7092,9 @@ def render_options_derivatives(mkt, opts, skew_idx, vix_term, vix_v,
     )
     k6.metric("Net GEX", gex_label, delta=gex_delta,
               delta_color="inverse" if total_gex is not None and total_gex < 0 else "normal")
+    if opts.get("pcr_source"):
+        pcr_stamp = opts.get("pcr_time") or opts.get("pcr_date") or "latest available"
+        st.caption(f"PCR source: {opts.get('pcr_source')} · timestamp: {pcr_stamp}")
 
     st.divider()
 
