@@ -3364,6 +3364,7 @@ TAB_DISPLAY_LABELS = {
     "🏦 Macro Overview": "🏦 Economy Overview",
     "💼 Labor & Consumer": "💼 Jobs, Wages & Spending",
     "💱 Markets & Sentiment": "💱 Markets & Investor Mood",
+    "Energy Futures": "🛢️ Energy Futures",
     "📉 Options & Derivatives": "📉 Options Risk & Market Protection",
     "🪙 Metals": "🪙 Metals & Commodities",
     "🏠 Housing & Credit": "🏠 Housing, Borrowing & Credit",
@@ -3602,6 +3603,12 @@ def render_tab_summary(tab_key, fred, treasury=None, mkt=None, fg=None, naaim=No
             f"Stocks look **{'expensive' if cape_v and cape_v > 30 else 'closer to normal' if cape_v is not None else 'unclear'}** based on the long-term valuation reading of **{_fmt(cape_v, 'idx')}**. "
             f"This tab tells you whether investors feel calm, cautious, or stretched."
         ),
+        "Energy Futures": (
+            f"📰 **Today's Energy Futures Snapshot ({today})**\n"
+            f"This tab reads uploaded WTI futures spread data and converts the curve into simple supply-demand signals. "
+            f"The front calendar spread shows whether near-term barrels are priced tight or loose, while WTI-Brent shows whether Brent is commanding a global-risk premium. "
+            f"Use it as an oil-market stress panel, not as a model-generated forecast."
+        ),
         "📉 Options & Derivatives": (
             f"📰 **Today's Options Risk Snapshot ({today})**\n"
             f"Market nervousness is **{_fmt(vix, 'idx')}**, and the investor fear gauge is **{_fmt(pcr, 'idx')}**. "
@@ -3833,13 +3840,15 @@ def _classify_regime(credit_roc, inflation_roc):
     return regime, REGIME_COLORS[regime]
 
 
-def compute_regime_state(fred, lookback_days=60):
+def compute_regime_state(fred, lookback_days=60, energy_curve=None):
+    curve_regime = get_energy_curve_regime(energy_curve)
     cpi_hist = fred.get("CPI_HIST", [])
     spread_hist = fred.get("SPREAD_HIST", [])
     if not cpi_hist or not spread_hist:
         return {
             "regime": "Mixed / Uncertain",
             "color": "#fbbf24",
+            "curve_regime": curve_regime,
             "credit_roc": None,
             "inflation_roc": None,
             "days_in_regime": 0,
@@ -3864,6 +3873,7 @@ def compute_regime_state(fred, lookback_days=60):
         return {
             "regime": "Mixed / Uncertain",
             "color": "#fbbf24",
+            "curve_regime": curve_regime,
             "credit_roc": None,
             "inflation_roc": None,
             "days_in_regime": 0,
@@ -3889,6 +3899,7 @@ def compute_regime_state(fred, lookback_days=60):
         return {
             "regime": "Mixed / Uncertain",
             "color": "#fbbf24",
+            "curve_regime": curve_regime,
             "credit_roc": None,
             "inflation_roc": None,
             "days_in_regime": 0,
@@ -3920,6 +3931,7 @@ def compute_regime_state(fred, lookback_days=60):
     return {
         "regime": current["regime"],
         "color": current["color"],
+        "curve_regime": curve_regime,
         "credit_roc": float(current["credit_roc"]),
         "inflation_roc": float(current["inflation_roc"]),
         "days_in_regime": days_in_regime,
@@ -4015,6 +4027,152 @@ def _hist_average(fred, key, periods=12):
 def _hist_latest(fred, key):
     values = _hist_values(fred, key, ascending=True)
     return values[-1] if values else None
+
+
+ENERGY_FUTURES_DEFAULT_PATH = "/Users/tazo/Desktop/futures-spreads-clm26-04-23-2026.csv"
+ENERGY_MONTH_CODES = {
+    "F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
+    "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12,
+}
+
+
+def _decode_futures_contract(contract):
+    try:
+        m = re.match(r"^([A-Z]+)([FGHJKMNQUVXZ])(\d)$", str(contract).strip().upper())
+        if not m:
+            return None
+        month_code = m.group(2)
+        year_digit = int(m.group(3))
+        year = 2030 + year_digit if year_digit <= 5 else 2020 + year_digit
+        return {
+            "symbol": str(contract).strip().upper(),
+            "root": m.group(1),
+            "month_code": month_code,
+            "month": ENERGY_MONTH_CODES[month_code],
+            "year": year,
+        }
+    except Exception:
+        return None
+
+
+def _infer_energy_front_contract(sp_rows):
+    try:
+        candidates = sp_rows.copy()
+        candidates["Volume"] = pd.to_numeric(candidates.get("Volume"), errors="coerce")
+        candidates = candidates.dropna(subset=["Volume"]).sort_values("Volume", ascending=False)
+        if not candidates.empty:
+            return str(candidates.iloc[0]["Leg1"]).strip().upper()
+    except Exception:
+        pass
+    try:
+        modes = sp_rows["Leg1"].dropna().astype(str).str.upper().mode()
+        if not modes.empty:
+            return modes.iloc[0]
+    except Exception:
+        pass
+    return None
+
+
+def load_futures_spreads(filepath):
+    """
+    Load a futures-spread CSV and return the WTI forward spread curve vs the
+    inferred front month. Related IS/BF rows are attached in DataFrame attrs.
+    """
+    try:
+        raw = pd.read_csv(filepath, skipfooter=1, engine="python")
+        for col in ["Leg1", "Leg2", "Leg3", "Leg4", "Type"]:
+            if col in raw.columns:
+                raw[col] = raw[col].astype("string").str.strip()
+        for col in ["Latest", "Change", "Open", "High", "Low", "Previous", "Volume"]:
+            if col in raw.columns:
+                raw[col] = pd.to_numeric(raw[col], errors="coerce")
+
+        sp_all = raw[
+            (raw.get("Type") == "SP") &
+            (raw.get("Leg3").isna()) &
+            (raw.get("Leg1").astype(str).str.startswith("CL", na=False))
+        ].copy()
+        if sp_all.empty:
+            return pd.DataFrame()
+
+        front_contract = _infer_energy_front_contract(sp_all)
+        front_meta = _decode_futures_contract(front_contract)
+        if not front_meta:
+            return pd.DataFrame()
+        front_month = front_meta["month"]
+
+        curve = sp_all[sp_all["Leg1"].astype(str).str.upper() == front_contract].copy()
+        if curve.empty:
+            curve = sp_all.copy()
+        decoded = curve["Leg2"].apply(_decode_futures_contract)
+        curve["leg2_month"] = decoded.apply(lambda x: x.get("month") if x else np.nan)
+        curve["leg2_year"] = decoded.apply(lambda x: x.get("year") if x else np.nan)
+        curve["months_out"] = (curve["leg2_year"] - 2026) * 12 + curve["leg2_month"] - front_month
+        curve["contract_label"] = curve["Leg2"].astype(str) + " vs " + curve["Leg1"].astype(str)
+        curve = curve.dropna(subset=["months_out", "Latest"]).copy()
+        curve["months_out"] = curve["months_out"].astype(int)
+        curve = curve.sort_values("months_out").reset_index(drop=True)
+
+        is_rows = raw[
+            (raw.get("Type") == "IS") &
+            (raw.get("Leg3").isna()) &
+            (raw.get("Leg1").astype(str).str.startswith("CL", na=False)) &
+            (raw.get("Leg2").astype(str).str.startswith("QA", na=False))
+        ].copy()
+        if not is_rows.empty:
+            is_decoded = is_rows["Leg2"].apply(_decode_futures_contract)
+            is_rows["leg2_month"] = is_decoded.apply(lambda x: x.get("month") if x else np.nan)
+            is_rows["leg2_year"] = is_decoded.apply(lambda x: x.get("year") if x else np.nan)
+            is_rows["months_out"] = (is_rows["leg2_year"] - 2026) * 12 + is_rows["leg2_month"] - front_month
+            is_rows["contract_label"] = is_rows["Leg1"].astype(str) + " / " + is_rows["Leg2"].astype(str)
+            is_rows["front_rank"] = np.where(is_rows["Leg1"].astype(str).str.upper() == front_contract, 0, 1)
+            is_rows = is_rows.sort_values(["front_rank", "months_out", "Leg1"]).reset_index(drop=True)
+
+        bf_rows = raw[
+            (raw.get("Type") == "BF") &
+            (raw.get("Leg1").astype(str).str.startswith("CL", na=False))
+        ].copy()
+
+        curve.attrs["raw"] = raw
+        curve.attrs["intermarket"] = is_rows
+        curve.attrs["butterflies"] = bf_rows
+        curve.attrs["front_contract"] = front_contract
+        curve.attrs["front_month"] = front_month
+        curve.attrs["front_year"] = front_meta["year"]
+        return curve
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_energy_curve_regime(futures_curve):
+    try:
+        if futures_curve is None or futures_curve.empty:
+            return None
+        front = _energy_spread_row(futures_curve, 1)
+        front_spread = _safe_float(front.get("Latest")) if front is not None else None
+        if front_spread is None:
+            return None
+        if front_spread < 0:
+            return "Backwardation"
+        if front_spread <= 2:
+            return "Flat"
+        if front_spread <= 5:
+            return "Contango"
+        return "Deep Contango"
+    except Exception:
+        return None
+
+
+def _energy_spread_row(futures_curve, months_out):
+    try:
+        if futures_curve is None or futures_curve.empty:
+            return None
+        rows = futures_curve[futures_curve["months_out"] == int(months_out)]
+        if rows.empty:
+            return None
+        return rows.iloc[0]
+    except Exception:
+        return None
 
 
 def _normalize_score(value, low, high, invert=False):
@@ -5136,6 +5294,133 @@ def make_metals_chart(mkt):
         height=280,
         margin=dict(l=20, r=20, t=45, b=30),
         yaxis_title="% Change",
+        showlegend=False,
+    )
+    return fig
+
+
+def make_energy_forward_curve_chart(futures_curve):
+    fig = go.Figure()
+    if futures_curve is None or futures_curve.empty:
+        fig.update_layout(
+            title=dict(text="WTI Forward Spread Curve (vs Front Month) — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=320,
+        )
+        return fig
+    curve = futures_curve.sort_values("months_out")
+    fig.add_trace(go.Scatter(
+        x=curve["months_out"],
+        y=curve["Latest"],
+        mode="lines+markers",
+        line=dict(color="#3b82f6", width=2.4),
+        marker=dict(color="#fbbf24", size=6),
+        hovertemplate="<b>%{customdata}</b><br>Months out: %{x}<br>Spread: $%{y:.2f}/bbl<extra></extra>",
+        customdata=curve["contract_label"],
+        name="Spread",
+    ))
+    for marker_month in [6, 12, 24, 60]:
+        row = _energy_spread_row(curve, marker_month)
+        if row is not None:
+            fig.add_trace(go.Scatter(
+                x=[row["months_out"]],
+                y=[row["Latest"]],
+                mode="markers+text",
+                marker=dict(size=12, color="#34d399", line=dict(color="#e2e8f0", width=1)),
+                text=[f"{marker_month}M"],
+                textposition="top center",
+                name=f"{marker_month}M",
+                hovertemplate=f"{marker_month}M<br>Spread: $%{{y:.2f}}/bbl<extra></extra>",
+            ))
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    fig.update_layout(
+        title=dict(text="WTI Forward Spread Curve (vs Front Month)", font_size=13),
+        xaxis=dict(title="Months Out", range=[0, 114]),
+        yaxis_title="Latest Spread ($/bbl)",
+        template=DARK_TEMPLATE,
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=PAPER_BG,
+        height=360,
+        margin=dict(l=50, r=30, t=45, b=45),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_energy_near_term_spreads_chart(futures_curve):
+    fig = go.Figure()
+    if futures_curve is None or futures_curve.empty:
+        fig.update_layout(
+            title=dict(text="Near-Term WTI Spreads — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=320,
+        )
+        return fig
+    near = futures_curve[(futures_curve["months_out"] >= 1) & (futures_curve["months_out"] <= 18)].copy()
+    near = near.sort_values("months_out", ascending=False)
+    colors = ["#34d399" if (chg or 0) > 0 else "#f87171" if (chg or 0) < 0 else "#94a3b8" for chg in near["Change"]]
+    fig.add_trace(go.Bar(
+        x=near["Latest"],
+        y=near["contract_label"],
+        orientation="h",
+        marker_color=colors,
+        text=[f"${v:.2f}" for v in near["Latest"]],
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>Spread: $%{x:.2f}/bbl<br>Daily change: %{customdata:+.2f}<extra></extra>",
+        customdata=near["Change"],
+    ))
+    fig.add_vline(x=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    fig.update_layout(
+        title=dict(text="Near-Term WTI Spreads (1-18 Months)", font_size=13),
+        xaxis_title="Latest Spread ($/bbl)",
+        yaxis_title="",
+        template=DARK_TEMPLATE,
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=PAPER_BG,
+        height=420,
+        margin=dict(l=120, r=50, t=45, b=40),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_energy_wti_brent_chart(futures_curve):
+    fig = go.Figure()
+    is_rows = futures_curve.attrs.get("intermarket", pd.DataFrame()) if futures_curve is not None else pd.DataFrame()
+    if not isinstance(is_rows, pd.DataFrame) or is_rows.empty:
+        fig.update_layout(
+            title=dict(text="WTI vs Brent Intermarket Spread — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=300,
+        )
+        return fig
+    plot_df = is_rows.dropna(subset=["Latest"]).head(24).copy()
+    colors = ["#f87171" if v < 0 else "#34d399" for v in plot_df["Latest"]]
+    fig.add_trace(go.Bar(
+        x=plot_df["contract_label"],
+        y=plot_df["Latest"],
+        marker_color=colors,
+        text=[f"${v:.2f}" for v in plot_df["Latest"]],
+        textposition="outside",
+        hovertemplate="<b>%{x}</b><br>WTI-Brent: $%{y:.2f}/bbl<br>Daily change: %{customdata:+.2f}<extra></extra>",
+        customdata=plot_df["Change"],
+    ))
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    fig.update_layout(
+        title=dict(text="WTI vs Brent Intermarket Spread", font_size=13),
+        xaxis_title="Contract Pair",
+        yaxis_title="Spread ($/bbl)",
+        template=DARK_TEMPLATE,
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=PAPER_BG,
+        height=320,
+        margin=dict(l=50, r=30, t=45, b=90),
         showlegend=False,
     )
     return fig
@@ -7405,7 +7690,7 @@ tbody tr:last-child td {{ border-bottom:none; }}
 
 
 # ── SMART ALERT CALLOUTS ──────────────────────────────────────────────────────
-def render_macro_alerts(fred):
+def render_macro_alerts(fred, energy_curve=None):
     gdp_v  = _get_val(fred, "GDPNOW") or _get_val(fred, "A191RL1Q225SBEA")
     cpi_v  = _get_val(fred, "CPIAUCSL")
     rec_v  = _get_val(fred, "RECPROUSM156N")
@@ -7457,6 +7742,39 @@ def render_macro_alerts(fred):
     if umich_v is not None and umich_v < 65:
         st.warning(f"⚠️ Consumer sentiment at {umich_v:.1f} — household confidence deteriorating")
 
+    if energy_curve is not None and not energy_curve.empty:
+        spread_1m_row = _energy_spread_row(energy_curve, 1)
+        spread_6m_row = _energy_spread_row(energy_curve, 6)
+        spread_1m = _safe_float(spread_1m_row.get("Latest")) if spread_1m_row is not None else None
+        spread_6m = _safe_float(spread_6m_row.get("Latest")) if spread_6m_row is not None else None
+        is_rows = energy_curve.attrs.get("intermarket", pd.DataFrame())
+        front_contract = energy_curve.attrs.get("front_contract")
+        front_is = None
+        if isinstance(is_rows, pd.DataFrame) and not is_rows.empty:
+            rows = is_rows[is_rows["Leg1"].astype(str).str.upper() == str(front_contract).upper()]
+            if not rows.empty:
+                front_is = rows.iloc[0]
+        wti_brent = _safe_float(front_is.get("Latest")) if front_is is not None else None
+        bf_rows = energy_curve.attrs.get("butterflies", pd.DataFrame())
+        bf_val = None
+        if isinstance(bf_rows, pd.DataFrame) and not bf_rows.empty:
+            target = bf_rows[
+                (bf_rows["Leg1"].astype(str).str.upper() == str(front_contract).upper()) &
+                (bf_rows["Leg2"].astype(str).str.upper().str.startswith("CLN")) &
+                (bf_rows["Leg3"].astype(str).str.upper().str.startswith("CLQ"))
+            ]
+            if not target.empty:
+                bf_val = _safe_float(target.iloc[0].get("Latest"))
+
+        if spread_1m is not None and spread_1m < 0:
+            st.error("🔴 WTI backwardation — supply squeeze signal")
+        if spread_1m is not None and spread_6m is not None and spread_1m > 0 and spread_6m > 15:
+            st.warning("⚠️ Deep contango — market sees near-term oversupply")
+        if wti_brent is not None and wti_brent < -10:
+            st.warning("⚠️ Brent premium > $10 — geopolitical risk or US glut")
+        if bf_val is not None and bf_val < -1.5:
+            st.info("Curve concavity widening — near-term supply easing")
+
 
 def render_labor_alerts(fred):
     un_v  = _get_val(fred, "UNRATE")
@@ -7502,6 +7820,111 @@ def render_markets_alerts(fred, mkt, fg, cape, opts=None):
 
     if opts and (opts.get("vvix") or 0) > 100:
         st.warning(f"⚡ VVIX at {opts['vvix']:.1f} — elevated tail risk hedging activity")
+
+
+def _energy_metric_card(title, row=None, warn_red=False):
+    if row is None:
+        value_text, delta_text, color = "N/A", "", "#94a3b8"
+    else:
+        value = _safe_float(row.get("Latest"))
+        change = _safe_float(row.get("Change"))
+        value_text = f"${value:+.2f}" if value is not None else "N/A"
+        delta_text = f"{change:+.2f}" if change is not None else ""
+        if warn_red and value is not None and value < -6:
+            color = "#f87171"
+        else:
+            color = "#34d399" if (change or 0) > 0 else "#f87171" if (change or 0) < 0 else "#94a3b8"
+    st.markdown(
+        f'<div style="background:#161b27;border:1px solid #1e2d3d;border-radius:10px;'
+        f'padding:14px 16px;min-height:112px;">'
+        f'<div style="color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.08em">'
+        f'{title}</div>'
+        f'<div style="color:{color};font-size:28px;font-weight:800;margin-top:8px;">{value_text}</div>'
+        f'<div style="color:#94a3b8;font-size:12px;margin-top:4px;">'
+        f'Daily change: <span style="color:{color};font-weight:700">{delta_text or "N/A"}</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_energy_futures(futures_curve):
+    st.subheader("Energy Futures")
+    st.caption(
+        "Upload a CME-style futures spreads CSV in the sidebar. The tab reads WTI calendar spreads, "
+        "WTI-Brent intermarket spreads, and the front butterfly to summarize oil curve stress."
+    )
+
+    if futures_curve is None or futures_curve.empty:
+        st.info("Upload a futures spreads CSV in the sidebar to load the Energy Futures dashboard.")
+        return
+
+    front_contract = futures_curve.attrs.get("front_contract", "Front")
+    curve_regime = get_energy_curve_regime(futures_curve) or "N/A"
+    regime_color = {
+        "Backwardation": "#f87171",
+        "Flat": "#94a3b8",
+        "Contango": "#fbbf24",
+        "Deep Contango": "#f87171",
+    }.get(curve_regime, "#94a3b8")
+    st.markdown(
+        f'<div style="display:inline-block;background:#161b27;border:1px solid {regime_color};'
+        f'color:{regime_color};padding:6px 14px;border-radius:8px;font-weight:700;'
+        f'font-size:14px;margin-bottom:12px">WTI Curve Regime: {curve_regime} · Front: {front_contract}</div>',
+        unsafe_allow_html=True,
+    )
+
+    row_1m = _energy_spread_row(futures_curve, 1)
+    row_6m = _energy_spread_row(futures_curve, 6)
+    row_12m = _energy_spread_row(futures_curve, 12)
+    is_rows = futures_curve.attrs.get("intermarket", pd.DataFrame())
+    front_is = None
+    if isinstance(is_rows, pd.DataFrame) and not is_rows.empty:
+        rows = is_rows[is_rows["Leg1"].astype(str).str.upper() == str(front_contract).upper()]
+        if not rows.empty:
+            front_is = rows.iloc[0]
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        _energy_metric_card("1M Spread (CLN6 vs CLM6)", row_1m)
+    with k2:
+        _energy_metric_card("6M Spread (CLZ6 vs CLM6)", row_6m)
+    with k3:
+        _energy_metric_card("12M Spread (CLM7 vs CLM6)", row_12m)
+    with k4:
+        _energy_metric_card("WTI-Brent Front Spread", front_is, warn_red=True)
+
+    st.caption(
+        "Interpretation: positive calendar spreads mean the front WTI contract is priced above the deferred contract in this file. "
+        "Negative WTI-Brent means Brent trades at a premium to WTI."
+    )
+
+    st.divider()
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        st.plotly_chart(
+            make_energy_forward_curve_chart(futures_curve),
+            use_container_width=True,
+            key="chart_energy_forward_curve",
+        )
+    with c2:
+        st.plotly_chart(
+            make_energy_near_term_spreads_chart(futures_curve),
+            use_container_width=True,
+            key="chart_energy_near_term",
+        )
+
+    st.plotly_chart(
+        make_energy_wti_brent_chart(futures_curve),
+        use_container_width=True,
+        key="chart_energy_wti_brent",
+    )
+
+    with st.expander("Raw cleaned WTI spread rows"):
+        st.dataframe(
+            futures_curve[["Leg1", "Leg2", "Type", "months_out", "Latest", "Change", "Previous", "Volume", "Time"]],
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def render_premarket_futures_snapshot(mkt, premarket_data):
@@ -10185,11 +10608,17 @@ def build_sidebar():
             min_value=20, max_value=120, value=60, step=1,
         )
         st.session_state["regime_roc_lookback_days"] = regime_lookback_days
+        futures_csv = st.file_uploader(
+            "Upload futures spreads CSV",
+            type="csv",
+            key="futures_csv",
+        )
 
         all_sections = [
             "🏦 Macro Overview",
             "💼 Labor & Consumer",
             "💱 Markets & Sentiment",
+            "Energy Futures",
             "📉 Options & Derivatives",
             "🪙 Metals",
             "🏠 Housing & Credit",
@@ -10246,12 +10675,12 @@ def build_sidebar():
 
         st.caption(f"Last updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M UTC')}")
 
-    return lookback, regime_lookback_days, visible_sections
+    return lookback, regime_lookback_days, visible_sections, futures_csv
 
 
 # ── MAIN APP ──────────────────────────────────────────────────────────────────
 def main():
-    lookback, regime_lookback_days, visible_sections = build_sidebar()
+    lookback, regime_lookback_days, visible_sections, futures_csv = build_sidebar()
 
     with st.status("📡 Loading core dashboard data…", expanded=False) as status:
         fred = fetch_fred()
@@ -10262,6 +10691,12 @@ def main():
         cape = fetch_shiller_cape()
         status.update(label="✅ Core dashboard ready", state="complete", expanded=False)
 
+    futures_curve = pd.DataFrame()
+    if futures_csv is not None:
+        futures_curve = load_futures_spreads(futures_csv)
+    elif os.path.exists(ENERGY_FUTURES_DEFAULT_PATH):
+        futures_curve = load_futures_spreads(ENERGY_FUTURES_DEFAULT_PATH)
+
     render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, None, [], None)
     if has_systemic_data_failure(fred, treasury, mkt, fg, naaim, cape):
         st.error(
@@ -10270,12 +10705,30 @@ def main():
 
     # ── REGIME LABEL ────────────────────────────────────────────────────────
     regime_label, regime_color = _regime(fred, mkt)
+    energy_curve_regime = compute_regime_state(
+        fred,
+        lookback_days=regime_lookback_days,
+        energy_curve=futures_curve,
+    ).get("curve_regime")
     st.markdown(
         f'<div style="display:inline-block;background:#161b27;border:1px solid {regime_color};'
         f'color:{regime_color};padding:6px 18px;border-radius:8px;font-weight:700;'
         f'font-size:15px;margin-bottom:12px">Macro Regime: {regime_label}</div>',
         unsafe_allow_html=True,
     )
+    if energy_curve_regime:
+        energy_regime_color = {
+            "Backwardation": "#f87171",
+            "Flat": "#94a3b8",
+            "Contango": "#fbbf24",
+            "Deep Contango": "#f87171",
+        }.get(energy_curve_regime, "#94a3b8")
+        st.markdown(
+            f'<div style="display:inline-block;background:#161b27;border:1px solid {energy_regime_color};'
+            f'color:{energy_regime_color};padding:6px 18px;border-radius:8px;font-weight:700;'
+            f'font-size:15px;margin-left:8px;margin-bottom:12px">WTI Curve: {energy_curve_regime}</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── KPI ROW ─────────────────────────────────────────────────────────────
     gdp_v  = _get_val(fred, "GDPNOW") or _get_val(fred, "A191RL1Q225SBEA")
@@ -10330,6 +10783,7 @@ def main():
         "🏦 Macro Overview",
         "💼 Labor & Consumer",
         "💱 Markets & Sentiment",
+        "Energy Futures",
         "📉 Options & Derivatives",
         "🪙 Metals",
         "🏠 Housing & Credit",
@@ -10359,7 +10813,7 @@ def main():
                 [fetch_fred, fetch_treasury, fetch_market, fetch_fear_greed, fetch_naaim, fetch_shiller_cape],
             )
             render_tab_summary("🏦 Macro Overview", fred, treasury=treasury, mkt=mkt, fg=fg, naaim=naaim, cape=cape)
-            render_macro_alerts(fred)
+            render_macro_alerts(fred, futures_curve)
 
             col1, col2 = st.columns([1.1, 1])
             with col1:
@@ -10705,6 +11159,11 @@ def main():
                         f'{"" if chg is None else f"{chg:+.2f}%"}</div></div>',
                         unsafe_allow_html=True,
                     )
+
+    if "Energy Futures" in tab_map:
+        with tab_map["Energy Futures"]:
+            render_tab_summary("Energy Futures", fred, treasury=treasury, mkt=mkt, fg=fg, naaim=naaim, cape=cape)
+            render_energy_futures(futures_curve)
 
     # ── TAB 4: OPTIONS & DERIVATIVES ──────────────────────────────────────
     if "📉 Options & Derivatives" in tab_map:
