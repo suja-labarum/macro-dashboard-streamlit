@@ -571,8 +571,10 @@ FRED_SERIES = {
     "TEDRATE"        : ("TED Spread",                    "Liquidity", "%"),
     "DRTSCILM"       : ("Loan Officer Tightening Stds",  "Liquidity", "%"),
     "BOGMBASE"       : ("Monetary Base",                 "Liquidity", "B"),
-    "WRMFSL"         : ("Retail Money Market Fund Assets",        "Institutional", "B"),
-    "WRMFNS"         : ("Institutional Money Market Fund Assets", "Institutional", "B"),
+    "WRMFSL"         : ("Retail Money Market Funds (Discontinued)", "Liquidity", "B"),
+    "WRMFNS"         : ("Retail Money Market Fund Assets",          "Liquidity", "B"),
+    "WIMFSL"         : ("Institutional Money Market Funds (Discontinued)", "Liquidity", "B"),
+    "WIMFNS"         : ("Institutional Money Market Funds (Discontinued)", "Liquidity", "B"),
     "BOGZ1FL653064100Q": ("Mutual Fund Total Equity Assets",      "Institutional", "B"),
     "DTWEXBGS"       : ("USD Broad Trade-Weighted Index",         "CTA",           "idx"),
     "UMCSENT"        : ("University of Michigan Consumer Sentiment Index", "Sentiment", "idx"),
@@ -870,14 +872,33 @@ def fetch_fred():
         except Exception:
             pass
 
-    # GDPNow scrape
+    # GDPNow official workbook
     try:
-        html = _http_get_text("https://www.atlantafed.org/cqer/research/gdpnow", timeout=10)
-        m = re.search(r'GDPNow model estimate.*?(\-?\d+\.\d+)', html)
-        if m:
-            results["GDPNOW"] = {"value":float(m.group(1)),"date":str(datetime.date.today()),
+        raw = _http_get(
+            "https://www.atlantafed.org/-/media/Project/Atlanta/FRBA/Documents/cqer/researchcq/gdpnow/GDPTrackingModelDataAndForecasts.xlsx",
+            timeout=20,
+        )
+        gdp_book = pd.read_excel(io.BytesIO(raw), sheet_name="CurrentQtrEvolution")
+        points = []
+        for idx in ("", ".1", ".2"):
+            date_col = f"Date{idx}"
+            gdp_col = f"GDP*{idx}"
+            if date_col not in gdp_book.columns or gdp_col not in gdp_book.columns:
+                continue
+            block = gdp_book[[date_col, gdp_col]].copy()
+            block.columns = ["date", "value"]
+            block["date"] = pd.to_datetime(block["date"], errors="coerce")
+            block["value"] = pd.to_numeric(block["value"], errors="coerce")
+            block = block.dropna(subset=["date", "value"])
+            if not block.empty:
+                points.append(block)
+        if points:
+            gdp_df = pd.concat(points, ignore_index=True).sort_values("date")
+            latest = gdp_df.iloc[-1]
+            gdp_date = latest["date"].strftime("%Y-%m-%d")
+            results["GDPNOW"] = {"value":float(latest["value"]),"date":gdp_date,
                                   "label":"GDPNow (Atlanta Fed)","category":"Growth","unit":"%",
-                                  "source_tag":"FRED","period":"Current","quality":"nowcast"}
+                                  "source_tag":"Atlanta Fed","period":gdp_date[:7],"quality":"nowcast"}
     except Exception:
         pass
     if "GDPNOW" not in results:
@@ -909,6 +930,30 @@ def fetch_fred():
             "quality": "computed",
         }
         _FRED_ERRORS.pop("T30Y2Y", None)
+
+    def _mark_stale(series_id, max_age_days, null_value=True):
+        entry = results.get(series_id)
+        if not entry or not entry.get("date"):
+            return
+        try:
+            dt = pd.to_datetime(entry["date"], errors="coerce")
+            if pd.isna(dt):
+                return
+            age_days = int((pd.Timestamp(datetime.date.today()) - dt.normalize()).days)
+            entry["age_days"] = age_days
+            if age_days > max_age_days:
+                entry["quality"] = "stale"
+                entry["stale"] = True
+                entry["last_value"] = entry.get("value")
+                entry["source_tag"] = f"{entry.get('source_tag', 'FRED')} (stale)"
+                if null_value:
+                    entry["value"] = None
+                _FRED_ERRORS[series_id] = f"Series stale: latest official observation {entry['date']} ({age_days}d old)"
+        except Exception:
+            return
+
+    for stale_sid in ("USSLIND", "TEDRATE", "STLFSI2", "WRMFSL", "WIMFSL", "WIMFNS"):
+        _mark_stale(stale_sid, 60, null_value=True)
 
     # Historical series used by Phillips Curve and regime state modules
     results["CPI_HIST"]    = _fred_hist("CPIAUCSL", "pc1", 90, record_error=False)
@@ -947,6 +992,8 @@ def fetch_fred():
     results["NAPM_HIST"] = _fred_hist("NAPM", "lin", 24, record_error=False)
     results["WRMFNS_HIST"] = _fred_hist("WRMFNS", "lin", 52, record_error=False)
     results["WRMFSL_HIST"] = _fred_hist("WRMFSL", "lin", 52, record_error=False)
+    results["WIMFNS_HIST"] = _fred_hist("WIMFNS", "lin", 52, record_error=False)
+    results["WIMFSL_HIST"] = _fred_hist("WIMFSL", "lin", 52, record_error=False)
     results["DTWEXBGS_HIST"] = _fred_hist("DTWEXBGS", "lin", 52, record_error=False)
     return results
 
@@ -1783,61 +1830,58 @@ def fetch_cot_data():
 @st.cache_data(ttl=3600)
 def fetch_ici_fund_flows():
     """
-    Fetch ICI weekly mutual fund and ETF flow estimates from the public XLS workbook.
-    Returns dict with equity, bond, and money market flows for the last 12 weekly rows.
+    Fetch ICI weekly mutual fund flow estimates from the official public table.
+    Returns equity and bond fund flows for the last 12 weekly observations.
     """
     try:
-        def _to_float(value):
-            if value is None:
-                return None
-            text = str(value).strip().replace(",", "")
-            if text in {"", "nan", "None"}:
-                return None
-            if text.startswith("(") and text.endswith(")"):
-                text = "-" + text[1:-1]
-            return float(text)
-
-        year = datetime.date.today().year
-        for y in (year, year - 1):
-            try:
-                url = f"https://www.iciglobal.org/flows_data_{y}.xls"
-                raw = _http_get(url, timeout=20)
-                df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=None)
-                flows = []
-                for _, row in df.iterrows():
-                    vals = [v for v in row.tolist() if str(v).strip() not in {"", "nan", "None"}]
-                    if len(vals) < 4:
-                        continue
-                    date_val = pd.to_datetime(vals[0], errors="coerce")
-                    if pd.isna(date_val):
-                        continue
-                    numeric_vals = []
-                    for cell in vals[1:]:
-                        try:
-                            numeric_vals.append(_to_float(cell))
-                        except Exception:
-                            continue
-                    numeric_vals = [v for v in numeric_vals if v is not None]
-                    if len(numeric_vals) < 3:
-                        continue
-                    flows.append({
-                        "date": date_val.strftime("%Y-%m-%d"),
-                        "equity": numeric_vals[0],
-                        "bond": numeric_vals[1] if len(numeric_vals) > 1 else None,
-                        "money_market": numeric_vals[2] if len(numeric_vals) > 2 else None,
-                    })
-                if flows:
-                    flows = flows[-12:]
-                    return {
-                        "flows": flows,
-                        "latest_equity": flows[-1].get("equity"),
-                        "latest_bond": flows[-1].get("bond"),
-                        "latest_money_market": flows[-1].get("money_market"),
-                        "date": flows[-1].get("date"),
-                        "source": f"ICI {y}",
-                    }
-            except Exception:
+        html = _http_get_text("https://www.iciglobal.org/research/stats/flows", timeout=20)
+        tables = pd.read_html(io.StringIO(html), flavor="lxml")
+        for df in tables:
+            if df.shape[0] < 5 or df.shape[1] < 3:
                 continue
+            labels = df.iloc[:, 0].astype(str).str.strip().str.lower()
+            if not any(labels.str.contains("total equity")) or not any(labels.str.contains("total bond")):
+                continue
+            date_cols = []
+            header_row = df.iloc[0]
+            data_df = df.iloc[1:].copy()
+            labels = data_df.iloc[:, 0].astype(str).str.strip().str.lower()
+            for col in data_df.columns[1:]:
+                dt = pd.to_datetime(str(header_row[col]), errors="coerce")
+                if pd.notna(dt):
+                    date_cols.append((col, dt))
+            if not date_cols:
+                continue
+
+            def _row_value(pattern, col):
+                try:
+                    row = data_df[labels.str.contains(pattern, na=False)].iloc[0]
+                    return float(pd.to_numeric(row[col], errors="coerce"))
+                except Exception:
+                    return None
+
+            flows = []
+            for col, dt in date_cols:
+                flows.append({
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "equity": _row_value(r"^total equity$", col),
+                    "bond": _row_value(r"^total bond$", col),
+                    "money_market": None,
+                })
+            flows = [row for row in flows if row.get("equity") is not None or row.get("bond") is not None]
+            flows = sorted(flows, key=lambda row: row["date"])[-12:]
+            if flows:
+                latest = flows[-1]
+                return {
+                    "flows": flows,
+                    "equity": latest.get("equity"),
+                    "bond": latest.get("bond"),
+                    "latest_equity": latest.get("equity"),
+                    "latest_bond": latest.get("bond"),
+                    "latest_money_market": latest.get("money_market"),
+                    "date": latest.get("date"),
+                    "source": "ICI official weekly flows table",
+                }
         return None
     except Exception:
         return None
@@ -1900,26 +1944,33 @@ def fetch_13f_aggregate(top_n=10):
 
 def fetch_mmf_assets_history(fred):
     """
-    Build weekly money market fund flow series from FRED WRMFNS/WRMFSL hist data.
-    Computes week-over-week change to identify institutional cash flows.
+    Build weekly money market fund flow series from FRED history.
+    WRMFNS is the current retail weekly series.
+    Institutional weekly series were discontinued in 2021 and are omitted when stale.
     """
     try:
-        inst_hist = fred.get("WRMFNS_HIST", [])
-        ret_hist = fred.get("WRMFSL_HIST", [])
+        inst_hist = fred.get("WIMFNS_HIST", []) or fred.get("WIMFSL_HIST", [])
+        ret_hist = fred.get("WRMFNS_HIST", []) or fred.get("WRMFSL_HIST", [])
 
-        def build_flow_series(hist):
+        def build_flow_series(hist, max_age_days=None):
             if not hist or len(hist) < 2:
                 return []
             df = pd.DataFrame(hist, columns=["value", "date"])
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
             df["value"] = pd.to_numeric(df["value"], errors="coerce")
             df = df.dropna().sort_values("date").reset_index(drop=True)
+            if df.empty:
+                return []
+            if max_age_days is not None:
+                age_days = int((pd.Timestamp(datetime.date.today()) - df["date"].iloc[-1].normalize()).days)
+                if age_days > max_age_days:
+                    return []
             df["flow"] = df["value"].diff()
             return df.dropna(subset=["flow"]).to_dict("records")
 
         return {
-            "institutional": build_flow_series(inst_hist),
-            "retail": build_flow_series(ret_hist),
+            "institutional": build_flow_series(inst_hist, max_age_days=120),
+            "retail": build_flow_series(ret_hist, max_age_days=120),
         }
     except Exception:
         return None
@@ -1936,27 +1987,30 @@ def fetch_vrp_and_realized_vol(lookback_days: int = 252 * 2):
     VRP < -5 → realized vol spike, market moving faster than priced
     """
     try:
-        import yfinance as yf
         import numpy as np
 
-        ticker = yf.Ticker("SPY")
-        hist = ticker.history(period="3y")
-        if hist.empty or len(hist) < 60:
+        spy_hist = fetch_yfinance_close_history("SPY", period="3y", interval="1d")
+        vix_hist = fetch_yfinance_close_history("^VIX", period="3y", interval="1d")
+        if len(spy_hist) < 60 or len(vix_hist) < 40:
             return None
 
-        hist = hist[["Close"]].dropna().copy()
+        hist = pd.DataFrame(spy_hist)
+        hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+        hist["Close"] = pd.to_numeric(hist["value"], errors="coerce")
+        hist = hist.dropna(subset=["date", "Close"]).sort_values("date").set_index("date")[["Close"]]
+
+        vix_df = pd.DataFrame(vix_hist)
+        vix_df["date"] = pd.to_datetime(vix_df["date"], errors="coerce")
+        vix_df["vix"] = pd.to_numeric(vix_df["value"], errors="coerce")
+        vix_df = vix_df.dropna(subset=["date", "vix"]).sort_values("date").set_index("date")[["vix"]]
+
         log_ret = np.log(hist["Close"] / hist["Close"].shift(1))
         hist["rv20"] = log_ret.rolling(20).std() * np.sqrt(252) * 100
         hist["rv30"] = log_ret.rolling(30).std() * np.sqrt(252) * 100
         hist["rv60"] = log_ret.rolling(60).std() * np.sqrt(252) * 100
         hist = hist.dropna(subset=["rv20"])
 
-        vix_hist = yf.Ticker("^VIX").history(period="3y")[["Close"]].dropna()
-        if vix_hist.empty:
-            return None
-        vix_hist.columns = ["vix"]
-
-        merged = hist.join(vix_hist, how="inner").dropna()
+        merged = hist.join(vix_df, how="inner").dropna()
         if len(merged) < 40:
             return None
 
@@ -2562,53 +2616,56 @@ def fetch_options_chain_data(ticker_sym="SPY"):
 @st.cache_data(ttl="1h")
 def fetch_pcr_history():
     """
-    Fetch 30-day historical equity Put/Call Ratio.
-    Primary:  CBOE market-statistics daily page (scraped)
-    Fallback: CBOE public CSV endpoint
+    Fetch 30-day historical Put/Call Ratio.
+    Primary: official Cboe CSV endpoint.
+    Fallback: current intraday table from fetch_put_call_ratio_live().
     """
-    # ── Try CBOE web scrape ───────────────────────────────────────────────────
     try:
-        html = _http_get_text(
-            "https://www.cboe.com/us/options/market_statistics/daily/", timeout=15
-        )
-        tables = pd.read_html(io.StringIO(html))
-        for df in tables:
-            cols = [str(c).lower() for c in df.columns]
-            if any("ratio" in c or ("put" in c and "call" in c) for c in cols):
-                df.columns = [str(c) for c in df.columns]
-                date_col  = next((c for c in df.columns if "date" in c.lower()), None)
-                ratio_col = next(
-                    (c for c in df.columns
-                     if "ratio" in c.lower() or ("put" in c.lower() and "call" in c.lower())),
-                    None,
-                )
-                if date_col and ratio_col:
-                    df["_date"] = pd.to_datetime(df[date_col], errors="coerce")
-                    df["_pcr"]  = pd.to_numeric(df[ratio_col], errors="coerce")
-                    df = df.dropna(subset=["_date", "_pcr"])
-                    if len(df) >= 3:
-                        df = df.sort_values("_date").tail(30)
-                        return [
-                            {"date": r["_date"].strftime("%Y-%m-%d"), "pcr": float(r["_pcr"])}
-                            for _, r in df.iterrows()
-                        ]
+        def _parse_cboe_csv(url):
+            csv_text = _http_get_text(url, timeout=15)
+            lines = [line for line in csv_text.splitlines() if line.strip()]
+            header_idx = next((i for i, line in enumerate(lines) if line.upper().startswith("DATE,")), None)
+            if header_idx is None:
+                return []
+            df = pd.read_csv(io.StringIO("\n".join(lines[header_idx:])))
+            date_col = next((c for c in df.columns if "date" in str(c).lower()), df.columns[0])
+            ratio_col = next((c for c in df.columns if "ratio" in str(c).lower()), None)
+            if ratio_col is None:
+                return []
+            df["_date"] = pd.to_datetime(df[date_col], errors="coerce")
+            df["_pcr"] = pd.to_numeric(df[ratio_col], errors="coerce")
+            df = df.dropna(subset=["_date", "_pcr"]).sort_values("_date")
+            if df.empty:
+                return []
+            latest_dt = df["_date"].iloc[-1]
+            if int((pd.Timestamp(datetime.date.today()) - latest_dt.normalize()).days) > 14:
+                return []
+            df = df.tail(30)
+            return [
+                {"date": row["_date"].strftime("%Y-%m-%d"), "pcr": round(float(row["_pcr"]), 4)}
+                for _, row in df.iterrows()
+            ]
+
+        rows = _parse_cboe_csv("https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv")
+        if rows:
+            return rows
+        rows = _parse_cboe_csv("https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/equitypc.csv")
+        if rows:
+            return rows
     except Exception:
         pass
 
-    # ── Try CBOE public CDN equity PCR CSV ───────────────────────────────────
     try:
-        csv_text = _http_get_text(
-            "https://cdn.cboe.com/api/global/us_indices/daily_prices/EPC_History.csv",
-            timeout=12,
-        )
-        df = pd.read_csv(io.StringIO(csv_text))
-        df.columns = [c.strip() for c in df.columns]
-        df["DATE"]  = pd.to_datetime(df.get("DATE", df.columns[0]), errors="coerce")
-        df["RATIO"] = pd.to_numeric(df.get("RATIO", df.get("EPC", df.iloc[:, 1])), errors="coerce")
-        df = df.dropna(subset=["DATE", "RATIO"]).sort_values("DATE").tail(30)
-        if len(df) >= 3:
-            return [{"date": r["DATE"].strftime("%Y-%m-%d"), "pcr": float(r["RATIO"])}
-                    for _, r in df.iterrows()]
+        live = fetch_put_call_ratio_live() or {}
+        for bucket in ("total_options", "equity_options", "index_options"):
+            rows = (live.get(bucket) or {}).get("intraday") or []
+            if rows:
+                today = datetime.date.today().strftime("%Y-%m-%d")
+                return [
+                    {"date": f"{today} {row.get('time', '')}".strip(), "pcr": round(float(row["pcr"]), 4)}
+                    for row in rows
+                    if row.get("pcr") is not None
+                ]
     except Exception:
         pass
 
@@ -2915,8 +2972,39 @@ def fetch_news():
                         "source":it.get("source",""),"time":it.get("time_published","")[:8],
                         "score":score,"sentiment":it.get("overall_sentiment_label","Neutral"),
                         "color":"#34d399" if score>0.1 else "#f87171" if score<-0.1 else "#fbbf24"})
-        return out
-    except Exception: return []
+        if out:
+            return out
+    except Exception:
+        pass
+
+    try:
+        fallback = fetch_worldmonitor_news(
+            per_category=3,
+            category_keys=["finance", "us", "gov", "energy"],
+        )
+        flat = []
+        seen = set()
+        for key in ("finance", "us", "gov", "energy"):
+            for item in fallback.get(key, []):
+                dedupe_key = (item.get("title"), item.get("url"))
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                flat.append({
+                    "title": item.get("title", ""),
+                    "url": item.get("url", "#"),
+                    "source": item.get("source", f"World Monitor · {item.get('category_label', key)}"),
+                    "time": item.get("time", ""),
+                    "score": 0.0,
+                    "sentiment": item.get("category_label", key),
+                    "color": "#3b82f6",
+                })
+        flat = sorted(flat, key=lambda row: row.get("time", ""), reverse=True)
+        if flat:
+            return flat[:6]
+    except Exception:
+        pass
+    return []
 
 
 WORLDMONITOR_NEWS_CATEGORY_LABELS = {
@@ -7047,10 +7135,14 @@ def compute_institutional_participation_score(cot_data, ici_data, mmf_history, f
                 scores["ici_equity"] = -(recent_eq - mean_eq) / std_eq if std_eq > 0 else 0
                 weights["ici_equity"] = 0.25
 
-        inst_hist = fred.get("WRMFNS_HIST", [])
+        inst_hist = fred.get("WIMFNS_HIST", []) or fred.get("WIMFSL_HIST", [])
         if inst_hist and len(inst_hist) >= 8:
             vals = [float(v) for v, _ in inst_hist if v is not None]
-            if vals:
+            try:
+                latest_dt = pd.to_datetime(inst_hist[-1][1], errors="coerce")
+            except Exception:
+                latest_dt = pd.NaT
+            if vals and pd.notna(latest_dt) and int((pd.Timestamp(datetime.date.today()) - latest_dt.normalize()).days) <= 120:
                 current = vals[-1]
                 avg = sum(vals) / len(vals)
                 std = (sum((x - avg) ** 2 for x in vals) / len(vals)) ** 0.5
@@ -7348,10 +7440,13 @@ def generate_html_report(
         [_esc("EMB Spread Proxy"), _esc(_fmt(_get_val(fred, "BAMLH0A0HYM2"), "bp")), _esc("HY spread proxy; EM feed not connected")],
     ]
 
+    retail_mmf_entry = (fred.get("WRMFNS") or fred.get("WRMFSL") or {})
+    inst_mmf_entry = (fred.get("WIMFNS") or fred.get("WIMFSL") or {})
+
     institutional_rows = [
         [_esc("Participation Score"), _esc("N/A" if inst_score.get("score") is None else f"{inst_score['score']:.2f}"), _esc(inst_score.get("label", "Unavailable"))],
-        [_esc("Institutional MMF Assets"), _esc(_fmt(_get_val(fred, "WRMFNS"), "B")), _esc("FRED WRMFNS")],
-        [_esc("Retail MMF Assets"), _esc(_fmt(_get_val(fred, "WRMFSL"), "B")), _esc("FRED WRMFSL")],
+        [_esc("Retail MMF Assets"), _esc(_fmt(retail_mmf_entry.get("value"), "B")), _esc("FRED WRMFNS")],
+        [_esc("Institutional MMF Assets (disc.)"), _esc(_fmt(inst_mmf_entry.get("last_value") or inst_mmf_entry.get("value"), "B")), _esc(f"FRED WIMFNS · last official weekly print {inst_mmf_entry.get('date', 'N/A')}")],
         [_esc("COT S&P Net Non-Comm"), _esc("N/A" if not cot_data or "SP500_Emini" not in cot_data else f"{cot_data['SP500_Emini'].get('net_nc', 0):,.0f}"), _esc(cot_data["SP500_Emini"].get("date", "") if cot_data and "SP500_Emini" in cot_data else "Missing")],
         [_esc("ICI Equity Flow"), _esc("N/A" if not ici_data or ici_data.get("latest_equity") is None else f"${ici_data['latest_equity']:,.1f}B"), _esc(ici_data.get("date", "Missing") if ici_data else "Missing")],
         [_esc("ICI Money Market Flow"), _esc("N/A" if not ici_data or ici_data.get("latest_money_market") is None else f"${ici_data['latest_money_market']:,.1f}B"), _esc(ici_data.get("source", "Missing") if ici_data else "Missing")],
@@ -8862,8 +8957,10 @@ def render_institutional_flows(fred, cot_data, ici_data, mmf_history, inst13f,
     inst_score = compute_institutional_participation_score(cot_data, ici_data, mmf_history, fred)
     beginner_mode = is_beginner_mode()
 
-    wrmfns_v = _get_val(fred, "WRMFNS")
-    wrmfsl_v = _get_val(fred, "WRMFSL")
+    retail_mmf_entry = (fred.get("WRMFNS") or fred.get("WRMFSL") or {})
+    inst_mmf_entry = (fred.get("WIMFNS") or fred.get("WIMFSL") or {})
+    wrmfns_v = retail_mmf_entry.get("value")
+    wrmfsl_v = retail_mmf_entry.get("last_value") or retail_mmf_entry.get("value")
 
     if inst_score.get("score") is not None and inst_score["score"] > 1.5:
         st.error("🚨 Institutional Withdrawal: Multiple signals show institutions moving to cash — liquidity risk elevated 4–8 weeks ahead.")
@@ -8875,9 +8972,9 @@ def render_institutional_flows(fred, cot_data, ici_data, mmf_history, inst13f,
         st.success(f"✅ Institutional positioning: {label}" + (f" (score: {score:.2f})" if score is not None else ""))
 
     if wrmfns_v is not None and wrmfns_v > 6000:
-        st.error(f"🔴 Institutional MMF assets at ${wrmfns_v:,.0f}B — historically high, major risk-off signal.")
+        st.error(f"🔴 Retail MMF assets at ${wrmfns_v:,.0f}B — cash levels are historically high and still risk-off.")
     elif wrmfns_v is not None and wrmfns_v > 5000:
-        st.warning(f"⚠️ Institutional MMF assets at ${wrmfns_v:,.0f}B — elevated, monitor for further buildup.")
+        st.warning(f"⚠️ Retail MMF assets at ${wrmfns_v:,.0f}B — elevated cash buildup, monitor for further defensive positioning.")
 
     if cot_data and "SP500_Emini" in cot_data:
         net = cot_data["SP500_Emini"].get("net_nc", 0)
@@ -8929,7 +9026,7 @@ def render_institutional_flows(fred, cot_data, ici_data, mmf_history, inst13f,
         delta_color="normal" if (ici_eq or 0) > 0 else "inverse"
     )
     k4.metric(
-        "Inst. MMF Assets",
+        "Retail MMF Assets",
         f"${wrmfns_v:,.0f}B" if wrmfns_v is not None else "N/A",
         delta=f"{wrmfns_v - 5000:+.0f}B vs 5T ref" if wrmfns_v is not None else None,
         delta_color="inverse"
@@ -8974,8 +9071,10 @@ def render_institutional_flows(fred, cot_data, ici_data, mmf_history, inst13f,
         "money market flows show whether investors are moving into cash or out of it."
     )
 
-    inst_v = _get_val(fred, "WRMFNS")
-    ret_v = _get_val(fred, "WRMFSL")
+    inst_v = inst_mmf_entry.get("value")
+    inst_last_v = inst_mmf_entry.get("last_value") or inst_v
+    inst_date = inst_mmf_entry.get("date")
+    ret_v = retail_mmf_entry.get("value")
     ici_bond = ici_data.get("bond") if ici_data else None
 
     flow_k1, flow_k2, flow_k3, flow_k4 = st.columns(4)
@@ -8991,8 +9090,13 @@ def render_institutional_flows(fred, cot_data, ici_data, mmf_history, inst13f,
         delta=("Inflow" if ici_bond > 0 else "Outflow") if ici_bond is not None else None,
         delta_color="normal" if (ici_bond or 0) > 0 else "inverse",
     )
-    flow_k3.metric("Inst. MMF Total", f"${inst_v:,.0f}B" if inst_v is not None else "N/A")
+    flow_k3.metric("Institutional MMF (disc.)", f"${inst_last_v:,.0f}B" if inst_last_v is not None else "N/A")
     flow_k4.metric("Retail MMF Total", f"${ret_v:,.0f}B" if ret_v is not None else "N/A")
+    st.caption(
+        f"Retail MMF uses current FRED WRMFNS. "
+        f"Institutional weekly MMF series were discontinued by the Fed after {inst_date or '2021-02-01'}, "
+        f"so they are shown only as last-known history."
+    )
 
     if ici_data:
         r3c1, r3c2 = st.columns([1.0, 1.25])
@@ -10409,8 +10513,8 @@ def _build_ai_analysis_sections(snapshot):
         _ai_card("COT 10Y Leveraged", _format_ai_value(cot_tsy), "Leveraged-fund Treasury positioning"),
         _ai_card("ICI Equity Flow", _format_ai_value((ici or {}).get("latest_equity"), "B"), "Latest weekly equity-fund flow"),
         _ai_card("ICI Bond Flow", _format_ai_value((ici or {}).get("latest_bond"), "B"), "Latest weekly bond-fund flow"),
-        _ai_card("Inst. MMF Assets", _format_ai_value(_get_val(fred, "WRMFNS"), "B"), "Institutional cash parked in MMFs"),
-        _ai_card("Retail MMF Assets", _format_ai_value(_get_val(fred, "WRMFSL"), "B"), "Retail cash parked in MMFs"),
+        _ai_card("Retail MMF Assets", _format_ai_value(_get_val(fred, "WRMFNS"), "B"), "Current retail cash parked in MMFs"),
+        _ai_card("Institutional MMF Assets (disc.)", _format_ai_value((fred.get("WIMFNS") or fred.get("WIMFSL") or {}).get("last_value"), "B"), "Last known institutional weekly MMF series; discontinued in 2021"),
         _ai_card("CTA Equity Score", _format_ai_value((cta or {}).get("equity_score")), (cta or {}).get("equity_label", "Systematic trend score"), color=(cta or {}).get("equity_color", "#e2e8f0"), border_color=(cta or {}).get("equity_color", "#1e2d3d")),
         _ai_card("SG CTA YTD", _format_ai_value((sg_cta or {}).get("ytd_return"), "%"), "Public CTA index performance proxy"),
         _ai_card("13F Source", (inst13f or {}).get("source"), "Institutional holder dataset in use"),
