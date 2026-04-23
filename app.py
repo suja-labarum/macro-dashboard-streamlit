@@ -5063,14 +5063,21 @@ def make_vix_term_chart(term_data):
         return go.Figure()
     expiries = [item["expiry"] for item in term_data]
     values = [item["iv"] for item in term_data]
+    spread = values[-1] - values[0] if len(values) >= 2 else 0
+    if spread > 2:
+        structure_label = "Contango"
+    elif spread > -2:
+        structure_label = "Flat"
+    else:
+        structure_label = "Backwardation"
     colors = []
     for value in values:
-        if value > 25:
-            colors.append("#f87171")
-        elif value >= 20:
+        if value < 20:
+            colors.append("#34d399")
+        elif value <= 28:
             colors.append("#fbbf24")
         else:
-            colors.append("#34d399")
+            colors.append("#f87171")
     fig = go.Figure(go.Bar(
         x=values,
         y=expiries,
@@ -5078,7 +5085,15 @@ def make_vix_term_chart(term_data):
         marker_color=colors,
         text=[f"{value:.1f}" for value in values],
         textposition="outside",
+        hovertemplate="<b>%{y}</b><br>Implied Vol: %{x:.1f}<br><extra></extra>",
     ))
+    fig.add_vline(
+        x=20,
+        line_dash="dash",
+        line_color="#94a3b8",
+        annotation_text="Fear Threshold (20)",
+        annotation_position="top",
+    )
     if term_data and term_data[0].get("backwardation"):
         fig.add_annotation(
             x=max(values),
@@ -5089,17 +5104,50 @@ def make_vix_term_chart(term_data):
             font=dict(color="#f87171", size=11),
         )
     fig.update_layout(
-        title=dict(text="VIX Term Structure", font_size=13),
+        title=dict(
+            text=(
+                "VIX Term Structure"
+                f"<br><sup>9D→1Y spread: {spread:+.1f} vol pts | "
+                f"Structure: {structure_label}</sup>"
+            ),
+            font_size=13,
+        ),
         template=DARK_TEMPLATE,
         plot_bgcolor=CHART_BG,
         paper_bgcolor=PAPER_BG,
         height=280,
-        margin=dict(l=30, r=30, t=45, b=25),
+        margin=dict(l=30, r=30, t=62, b=25),
         xaxis_title="Implied Volatility",
         yaxis_title="Expiry",
         showlegend=False,
     )
     return fig
+
+
+def render_vix_term_structure_badge(term_data):
+    if not term_data or len(term_data) < 2:
+        return
+    try:
+        vix_9d = float(term_data[0]["iv"])
+        vix_1y = float(term_data[-1]["iv"])
+        spread = vix_1y - vix_9d
+        if spread > 2:
+            text = "✅ Contango — curve is normal, no near-term stress"
+            color = "#34d399"
+        elif spread > -2:
+            text = "⚠️ Flat curve — monitor for inversion"
+            color = "#fbbf24"
+        else:
+            text = "🔴 Backwardation — near-term fear spike detected"
+            color = "#f87171"
+        st.markdown(
+            f'<div style="background:#161b27;border:1px solid {color};border-radius:10px;'
+            f'padding:9px 12px;margin:4px 0 8px 0;color:{color};font-weight:700;'
+            f'font-size:13px">{text}</div>',
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        return
 
 
 def make_pcr_gauge(pcr_value):
@@ -7897,6 +7945,7 @@ def render_options_derivatives(mkt, opts, skew_idx, vix_term, vix_v,
     st.subheader("📈 VIX Volatility Surface")
     row1_c1, row1_c2 = st.columns([1.2, 1])
     with row1_c1:
+        render_vix_term_structure_badge(vix_term)
         st.plotly_chart(make_vix_term_chart(vix_term),
                         use_container_width=True, key="chart_vix_term_structure")
     with row1_c2:
@@ -8962,6 +9011,7 @@ def render_sentiment_framework(mkt, opts, skew_idx, fg, aaii, vix_term,
     with r4c2:
         st.subheader("1 · VIX Term Structure")
         if vix_term:
+            render_vix_term_structure_badge(vix_term)
             st.plotly_chart(
                 make_vix_term_chart(vix_term),
                 use_container_width=True,
