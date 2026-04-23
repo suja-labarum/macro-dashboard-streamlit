@@ -8,8 +8,8 @@
 
 # ─── .streamlit/secrets.toml ──────────────────────────────────────────────────
 # [secrets]
-# FRED_API_KEY      = "your_key_here"
-# ALPHA_VANTAGE_KEY = "your_key_here"
+# FRED_API_KEY      = "5d01552f6006df1f53e2316df2c149b2"
+# ALPHA_VANTAGE_KEY = "9Z55XQPBSL8DZSBM"
 #
 # Obtain keys at:
 #   FRED: https://fred.stlouisfed.org/docs/api/api_key.html
@@ -482,17 +482,16 @@ def get_api_key(key_name: str) -> str:
             return val
     return ""
 
-# API keys must come from Streamlit secrets or environment variables.
-# Do not hard-code credentials in a GitHub repository.
-FRED_API_KEY       = get_api_key("FRED_API_KEY")
-ALPHA_VANTAGE_KEY  = get_api_key("ALPHA_VANTAGE_KEY")
-BLS_API_KEY        = get_api_key("BLS_API_KEY")
-EIA_API_KEY        = get_api_key("EIA_API_KEY")
-FMP_API_KEY        = get_api_key("FMP_API_KEY")
-CFTC_APP_TOKEN     = get_api_key("CFTC_APP_TOKEN")
-NASDAQ_API_KEY     = get_api_key("NASDAQ_API_KEY")
-CONGRESS_GOV_API_KEY = get_api_key("CONGRESS_GOV_API_KEY")
-FINNHUB_API_KEY    = get_api_key("FINNHUBAPIKEY") or get_api_key("FINNHUB_API_KEY")
+# Default keys can be overridden by `.streamlit/secrets.toml` or env vars.
+FRED_API_KEY       = get_api_key("FRED_API_KEY") or "5d01552f6006df1f53e2316df2c149b2"
+ALPHA_VANTAGE_KEY  = get_api_key("ALPHA_VANTAGE_KEY") or "9Z55XQPBSL8DZSBM"
+BLS_API_KEY        = get_api_key("BLS_API_KEY") or "13bfde66bcc2464dad7132a6f57df306"
+EIA_API_KEY        = get_api_key("EIA_API_KEY") or "xBsQGPzttLAvhCtKAJZThK4YHJetxQC2Hvnf5Vcf"
+FMP_API_KEY        = get_api_key("FMP_API_KEY") or "hxIXLBfiqJgfbWgDIwLhwrKu4pH8UFL5"
+CFTC_APP_TOKEN     = get_api_key("CFTC_APP_TOKEN") or "2rrvhvwyfakbpy3buuxkrkat1"
+NASDAQ_API_KEY     = get_api_key("NASDAQ_API_KEY") or "TL9KS-wWUM2Uek92xncN"
+CONGRESS_GOV_API_KEY = get_api_key("CONGRESS_GOV_API_KEY") or "gkNA61vRNEO5hefEPHpN6wlinvQU6e1sHGpy3KKF"
+FINNHUB_API_KEY    = get_api_key("FINNHUBAPIKEY") or get_api_key("FINNHUB_API_KEY") or "d7h25u1r01qmqj476legd7h25u1r01qmqj476lf0"
 
 # ── HTTP HELPERS (requests preferred; urllib fallback with SSL fix) ────────────
 try:
@@ -538,11 +537,12 @@ FRED_SERIES = {
     "A191RL1Q225SBEA": ("GDP Growth (Annualized)",       "Growth",    "%"),
     "INDPRO"         : ("Industrial Production",         "Growth",    "%"),
     "WEI"            : ("Weekly Economic Index",         "Growth",    "idx"),
-    "USSLIND"        : ("US Leading Index (LEI)",        "Growth",    "%"),
+    "USSLIND"        : ("Leading Economic Index (LEI)",  "Growth",    "idx"),
+    "CFNAI"          : ("Chicago Fed CFNAI",             "Growth",    "idx"),
     "CPIAUCSL"       : ("CPI Inflation (YoY)",           "Inflation", "%"),
     "CPILFESL"       : ("Core CPI (ex Food/Energy)",     "Inflation", "%"),
     "PCEPILFE"       : ("Core PCE Inflation",            "Inflation", "%"),
-    "T10YIE"         : ("10yr Breakeven Inflation",      "Inflation", "%"),
+    "T10YIE"         : ("10Y Breakeven Inflation",       "Inflation", "%"),
     "UNRATE"         : ("Unemployment Rate",             "Labor",     "%"),
     "U6RATE"         : ("U-6 Underemployment",           "Labor",     "%"),
     "CIVPART"        : ("Labor Force Participation",     "Labor",     "%"),
@@ -553,16 +553,20 @@ FRED_SERIES = {
     "DFEDTARU"       : ("Fed Funds Upper Target",        "Fed",       "%"),
     "DFEDTARL"       : ("Fed Funds Lower Target",        "Fed",       "%"),
     "WALCL"          : ("Fed Balance Sheet",             "Fed",       "$T"),
-    "M2SL"           : ("M2 Money Supply",               "Fed",       "$B"),
+    "M2SL"           : ("M2 Money Supply",               "Liquidity", "$B"),
     "ECBDFR"         : ("ECB Deposit Rate",              "GlobalCB",  "%"),
     "BOERUKM"        : ("Bank of England Rate",          "GlobalCB",  "%"),
     "IRSTCI01JPM156N": ("Bank of Japan Rate",            "GlobalCB",  "%"),
     "BAMLH0A0HYM2"   : ("HY Credit Spread",             "Credit",    "bp"),
     "BAMLC0A0CM"     : ("IG Credit Spread",              "Credit",    "bp"),
+    "DGS2"           : ("2Y Treasury Yield",              "Rates",     "%"),
+    "DGS10"          : ("10Y Treasury Yield",            "Rates",     "%"),
+    "DGS30"          : ("30Y Treasury Yield",            "Rates",     "%"),
     "NFCI"           : ("Chicago Financial Conditions",  "Credit",    "idx"),
     "STLFSI2"        : ("St. Louis Stress Index",        "Credit",    "idx"),
     "T10Y3M"         : ("10Y-3M Yield Spread",           "Liquidity", "%"),
     "T10Y2Y"         : ("10Y-2Y Yield Spread",           "Liquidity", "%"),
+    "T30Y2Y"         : ("30Y-2Y Treasury Slope",         "Rates",     "%"),
     "SOFR"           : ("SOFR Rate",                     "Liquidity", "%"),
     "TEDRATE"        : ("TED Spread",                    "Liquidity", "%"),
     "DRTSCILM"       : ("Loan Officer Tightening Stds",  "Liquidity", "%"),
@@ -571,10 +575,10 @@ FRED_SERIES = {
     "WRMFNS"         : ("Institutional Money Market Fund Assets", "Institutional", "B"),
     "BOGZ1FL653064100Q": ("Mutual Fund Total Equity Assets",      "Institutional", "B"),
     "DTWEXBGS"       : ("USD Broad Trade-Weighted Index",         "CTA",           "idx"),
-    "UMCSENT"        : ("Consumer Sentiment",            "Consumer",  "idx"),
+    "UMCSENT"        : ("UMich Consumer Sentiment",      "Sentiment", "idx"),
     "RSXFS"          : ("Retail Sales (ex-Auto)",        "Consumer",  "$B"),
     "DSPIC96"        : ("Real Disposable Income",        "Consumer",  "$B"),
-    "PSAVERT"        : ("Personal Savings Rate",         "Consumer",  "%"),
+    "PSAVERT"        : ("Personal Savings Rate",         "Labor/Consumer", "%"),
     "TOTALSL"        : ("Total Consumer Credit",         "Consumer",  "$B"),
     "HOUST"          : ("Housing Starts",                "Housing",   "k"),
     "PERMIT"         : ("Building Permits",              "Housing",   "k"),
@@ -582,8 +586,9 @@ FRED_SERIES = {
     "CSUSHPINSA"     : ("Case-Shiller HPI (YoY)",        "Housing",   "%"),
     "MORTGAGE30US"   : ("30yr Mortgage Rate",            "Housing",   "%"),
     "MORTGAGE15US"   : ("15yr Mortgage Rate",            "Housing",   "%"),
+    "MSPNHSUS"        : ("New Home Sales",                "Housing",   "k"),
     "RECPROUSM156N"  : ("US Recession Probability",      "Risk",      "%"),
-    "CFNAI"          : ("Business Conditions (CFNAI)",   "Risk",      "idx"),
+    "SAHMREALTIME"   : ("Sahm Rule Real-Time",           "Recession", "pts"),
 }
 
 YF_TICKERS = [
@@ -594,7 +599,7 @@ YF_TICKERS = [
     "^DSPX","^KCJ",
     "CL=F","BZ=F","GC=F","SI=F","HG=F","PL=F","PA=F","ALI=F","NG=F",
     "BTC-USD",
-    "DX-Y.NYB","JPY=X","EURUSD=X","GBPUSD=X","CNY=X",
+    "DX-Y.NYB","JPY=X","EURUSD=X","GBPUSD=X","CNY=X","CNH=X",
     "^TNX","^FVX","^TYX",
     "TLT","HYG","IWM","LQD",
 ]
@@ -614,6 +619,7 @@ THRESHOLDS = {
     "USSLIND"        : [(0.0,  "🔴"), (0.3, "🟡"), (1e9, "🟢")],
     "WEI"            : [(0.0,  "🔴"), (0.5, "🟡"), (1e9, "🟢")],
     "CFNAI"          : [(-1.0, "🔴"), (0.0, "🟡"), (1e9, "🟢")],
+    "SAHMREALTIME"   : [(0.3, "🟢"), (0.5, "🟡"), (1e9, "🔴")],
     "DFF"            : [(3.0,  "🟢"), (5.5, "🟡"), (1e9, "🔴")],
     "BAMLH0A0HYM2"   : [(300,  "🟢"), (500, "🟡"), (1e9, "🔴")],
     "BAMLC0A0CM"     : [(100,  "🟢"), (200, "🟡"), (1e9, "🔴")],
@@ -621,6 +627,7 @@ THRESHOLDS = {
     "STLFSI2"        : [(-0.5, "🟢"), (0.5, "🟡"), (1e9, "🔴")],
     "T10Y3M"         : [(-0.5, "🔴"), (0.0, "🟡"), (1e9, "🟢")],
     "T10Y2Y"         : [(-0.5, "🔴"), (0.0, "🟡"), (1e9, "🟢")],
+    "T30Y2Y"         : [(-0.5, "🔴"), (0.0, "🟡"), (1e9, "🟢")],
     "SOFR"           : [(0.0, "🟢"), (5.0, "🟡"), (1e9, "🔴")],
     "TEDRATE"        : [(0.3, "🟢"), (0.5, "🟡"), (1e9, "🔴")],
     "DRTSCILM"       : [(20,  "🟡"), (40,  "🔴"), (1e9, "🔴")],
@@ -630,6 +637,7 @@ THRESHOLDS = {
     "PSAVERT"        : [(3.0,  "🔴"), (8.0, "🟡"), (1e9, "🟢")],
     "MORTGAGE30US"   : [(6.0,  "🟢"), (7.0, "🟡"), (1e9, "🔴")],
     "MORTGAGE15US"   : [(5.5,  "🟢"), (6.5, "🟡"), (1e9, "🔴")],
+    "MSPNHSUS"        : [(550, "🔴"), (700, "🟡"), (1e9, "🟢")],
     "RECPROUSM156N"  : [(10,   "🟢"), (30,  "🟡"), (1e9, "🔴")],
     "SHILLER_CAPE"   : [(20,   "🟢"), (30,  "🟡"), (1e9, "🔴")],
     "AAII_BEAR"      : [(20,   "🟢"), (40,  "🟡"), (1e9, "🔴")],
@@ -661,6 +669,7 @@ INDICATOR_RANGES = {
     "STLFSI2"        : (-2.0, 3.0),
     "T10Y3M"         : (-2.5, 3.0),
     "T10Y2Y"         : (-2.0, 3.0),
+    "T30Y2Y"         : (-2.0, 3.0),
     "SOFR"           : (0, 7),
     "TEDRATE"        : (0, 2.0),
     "DRTSCILM"       : (-30, 80),
@@ -668,6 +677,7 @@ INDICATOR_RANGES = {
     "WRMFSL"         : (1000, 5000),
     "UMCSENT"        : (50, 110),
     "PSAVERT"        : (2, 20),
+    "SAHMREALTIME"   : (0, 1.5),
     "MORTGAGE30US"   : (3, 9),
     "MORTGAGE15US"   : (2.5, 8),
     "CFNAI"          : (-5, 3),
@@ -680,6 +690,7 @@ INDICATOR_RANGES = {
     "HOUST"          : (800, 1800),
     "PERMIT"         : (800, 1800),
     "CSUSHPINSA"     : (-15, 25),
+    "MSPNHSUS"       : (400, 1200),
     "TOTALSL"        : (3000, 5200),
     "JTSJOL"         : (3000, 12000),
     "ECBDFR"         : (-1, 5),
@@ -693,7 +704,7 @@ INDICATOR_RANGES = {
 def fetch_fred():
     _FRED_ERRORS.clear()
     pct_series = {"CPIAUCSL","CPILFESL","PCEPILFE","INDPRO","CES0500000003",
-                  "RSXFS","DSPIC96","M2SL","CSUSHPINSA","TOTALSL","USSLIND"}
+                  "RSXFS","DSPIC96","CSUSHPINSA","TOTALSL"}
     results = {}
 
     def _infer_periods_per_year(dates: pd.Series) -> int:
@@ -800,7 +811,15 @@ def fetch_fred():
 
     def _fred_hist(series_id, units="lin", limit=16, record_error=False):
         obs = _fred_req(series_id, units, limit, record_error=record_error)
-        return [(float(o["value"]), o["date"][:7]) for o in obs if o["value"] != "."]
+        rows = []
+        for o in obs:
+            if o["value"] == ".":
+                continue
+            value = float(o["value"])
+            if series_id in {"BAMLH0A0HYM2", "BAMLC0A0CM"} and units == "lin":
+                value *= 100.0
+            rows.append((value, o["date"][:7]))
+        return rows
 
     def _get(sid):
         units = "pc1" if sid in pct_series else "lin"
@@ -808,6 +827,8 @@ def fetch_fred():
         if obs:
             try:
                 v = float(obs[0]["value"])
+                if sid in {"BAMLH0A0HYM2", "BAMLC0A0CM"} and units == "lin":
+                    v *= 100.0
                 lbl, cat, unit = FRED_SERIES[sid]
                 return sid, {"value":v,"date":obs[0]["date"],"label":lbl,"category":cat,
                              "unit":unit,"source_tag":"FRED","period":obs[0]["date"][:7],"quality":"release"}
@@ -833,6 +854,8 @@ def fetch_fred():
             continue
         try:
             v = float(obs[0]["value"])
+            if sid in {"BAMLH0A0HYM2", "BAMLC0A0CM"} and units == "lin":
+                v *= 100.0
             lbl, cat, unit = FRED_SERIES[sid]
             results[sid] = {
                 "value": v,
@@ -872,15 +895,56 @@ def fetch_fred():
                                   "label":"30yr vs 15yr Spread","category":"Housing","unit":"bp",
                                   "source_tag":"Computed","period":str(datetime.date.today())[:7]}
 
+    d30 = results.get("DGS30", {}).get("value")
+    d2 = results.get("DGS2", {}).get("value")
+    if d30 is not None and d2 is not None:
+        results["T30Y2Y"] = {
+            "value": round(float(d30) - float(d2), 3),
+            "date": str(datetime.date.today()),
+            "label": "30Y-2Y Treasury Slope",
+            "category": "Rates",
+            "unit": "%",
+            "source_tag": "Computed from DGS30-DGS2",
+            "period": str(datetime.date.today())[:7],
+            "quality": "computed",
+        }
+        _FRED_ERRORS.pop("T30Y2Y", None)
+
     # Historical series used by Phillips Curve and regime state modules
     results["CPI_HIST"]    = _fred_hist("CPIAUCSL", "pc1", 90, record_error=False)
     results["SPREAD_HIST"] = _fred_hist("BAMLC0A0CM", "lin", 90, record_error=False)
     results["UNRATE_HIST"] = _fred_hist("UNRATE",   "lin", 36, record_error=False)
     results["T10Y3M_HIST"] = _fred_hist("T10Y3M",   "lin", 90, record_error=False)
     results["T10Y2Y_HIST"] = _fred_hist("T10Y2Y",   "lin", 90, record_error=False)
+    results["T30Y2Y_HIST"] = _fred_hist("T30Y2Y",   "lin", 90, record_error=False)
     results["NFCI_HIST"]   = _fred_hist("NFCI",     "lin", 90, record_error=False)
     results["STLFSI2_HIST"] = _fred_hist("STLFSI2", "lin", 90, record_error=False)
     results["TEDRATE_HIST"] = _fred_hist("TEDRATE", "lin", 90, record_error=False)
+    results["DFF_HIST"] = _fred_hist("DFF", "lin", 90, record_error=False)
+    results["DGS2_HIST"] = _fred_hist("DGS2", "lin", 90, record_error=False)
+    results["DGS10_HIST"] = _fred_hist("DGS10", "lin", 90, record_error=False)
+    results["DGS30_HIST"] = _fred_hist("DGS30", "lin", 90, record_error=False)
+    try:
+        d2_hist = {date: value for value, date in results.get("DGS2_HIST", [])}
+        d30_hist = {date: value for value, date in results.get("DGS30_HIST", [])}
+        common_dates = [date for date in d30_hist.keys() if date in d2_hist]
+        results["T30Y2Y_HIST"] = [
+            (round(float(d30_hist[date]) - float(d2_hist[date]), 3), date)
+            for date in common_dates[:90]
+        ]
+    except Exception:
+        pass
+    results["HY_SPREAD_HIST"] = _fred_hist("BAMLH0A0HYM2", "lin", 90, record_error=False)
+    results["IG_SPREAD_HIST"] = _fred_hist("BAMLC0A0CM", "lin", 90, record_error=False)
+    results["M2SL_HIST"] = _fred_hist("M2SL", "lin", 48, record_error=False)
+    results["M2SL_YOY_HIST"] = _fred_hist("M2SL", "pc1", 36, record_error=False)
+    results["PSAVERT_HIST"] = _fred_hist("PSAVERT", "lin", 36, record_error=False)
+    results["UMCSENT_HIST"] = _fred_hist("UMCSENT", "lin", 36, record_error=False)
+    results["SAHMREALTIME_HIST"] = _fred_hist("SAHMREALTIME", "lin", 36, record_error=False)
+    results["PAYEMS_HIST"] = _fred_hist("PAYEMS", "lin", 36, record_error=False)
+    results["GDP_HIST"] = _fred_hist("A191RL1Q225SBEA", "lin", 24, record_error=False)
+    results["LEI_HIST"] = _fred_hist("USSLIND", "lin", 48, record_error=False)
+    results["NAPM_HIST"] = _fred_hist("NAPM", "lin", 24, record_error=False)
     results["WRMFNS_HIST"] = _fred_hist("WRMFNS", "lin", 52, record_error=False)
     results["WRMFSL_HIST"] = _fred_hist("WRMFSL", "lin", 52, record_error=False)
     results["DTWEXBGS_HIST"] = _fred_hist("DTWEXBGS", "lin", 52, record_error=False)
@@ -1078,6 +1142,24 @@ def fetch_market():
         return results
     except ImportError:
         return {}
+
+
+@st.cache_data(ttl="30m")
+def fetch_yfinance_close_history(symbol, period="1y", interval="1d"):
+    """Return yfinance close history as [{date, value}], silently failing to []."""
+    try:
+        import yfinance as yf
+        hist = yf.Ticker(symbol).history(period=period, interval=interval)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return []
+        close = hist["Close"].dropna()
+        return [
+            {"date": pd.Timestamp(d).strftime("%Y-%m-%d"), "value": float(v)}
+            for d, v in close.items()
+            if pd.notna(v)
+        ]
+    except Exception:
+        return []
 
 
 @st.cache_data(ttl="2m")
@@ -3233,6 +3315,8 @@ TAB_DISPLAY_LABELS = {
     "Liquidity Conditions": "💧 Money & Credit Conditions",
     "Institutional Flows": "🏦 Big Money Flows",
     "Sentiment Framework": "😊 Investor Mood Framework",
+    "GS-Style Composites": "🧮 Composite Risk Scores",
+    "Global Macro": "🌍 Global Macro",
     "🤖 AI Macro Analysis": "🤖 AI Economic Analysis",
 }
 
@@ -3503,6 +3587,18 @@ def render_tab_summary(tab_key, fred, treasury=None, mkt=None, fg=None, naaim=No
             f"This tab helps you see whether professional investors are putting money to work or stepping back into cash. "
             f"When big money gets defensive, liquidity can fade even if prices have not fallen yet."
         ),
+        "GS-Style Composites": (
+            f"📰 **Today's Composite Risk Snapshot ({today})**\n"
+            f"This tab combines multiple market and economic inputs into simplified 0–100 scores. "
+            f"Financial conditions show whether money is easy or tight, recession risk checks labor/curve/credit stress, and risk appetite shows whether investors are leaning defensive or aggressive. "
+            f"Treat these as dashboard proxies, not official Wall Street index values."
+        ),
+        "Global Macro": (
+            f"📰 **Today's Global Macro Snapshot ({today})**\n"
+            f"The dollar index is **{_fmt((mkt.get('DX-Y.NYB') or {}).get('value') if mkt else None, 'idx')}**, EUR/USD is **{_fmt((mkt.get('EURUSD=X') or {}).get('value') if mkt else None, 'idx')}**, and USD/JPY is **{_fmt((mkt.get('JPY=X') or {}).get('value') if mkt else None, 'idx')}**. "
+            f"A stronger dollar usually tightens financial conditions outside the U.S., especially for emerging markets and dollar borrowers. "
+            f"Use this tab to watch global funding pressure and major FX signals."
+        ),
         "Sentiment Framework": (
             f"📰 **Today's Investor Mood Snapshot ({today})**\n"
             f"Investor mood is **{fear if fear is not None else 'N/A'} / 100**, market nervousness is **{_fmt(vix, 'idx')}**, and bond market anxiety is **{_fmt(move, 'idx')}**. "
@@ -3518,6 +3614,44 @@ def render_tab_summary(tab_key, fred, treasury=None, mkt=None, fg=None, naaim=No
     }
 
     st.info(summaries.get(tab_key, f"📰 **Today's Snapshot ({today})**\nThis section summarizes the latest live market and economic data in plain English."))
+    if tab_key == "🏦 Macro Overview":
+        sahm = _get_val(fred, "SAHMREALTIME")
+        psavert = _get_val(fred, "PSAVERT")
+        psavert_avg = _hist_average(fred, "PSAVERT_HIST", periods=12)
+        m2_yoy = compute_m2_yoy_change(fred)
+        umich = _get_val(fred, "UMCSENT")
+        umich_delta = _hist_latest_delta(fred, "UMCSENT_HIST", periods=1)
+        ig = _get_val(fred, "BAMLC0A0CM")
+        hy = _get_val(fred, "BAMLH0A0HYM2")
+        k = st.columns(5)
+        k[0].metric(
+            "Sahm Rule",
+            f"{sahm:.2f}" if sahm is not None else "N/A",
+            delta="Recession trigger" if sahm is not None and sahm >= 0.5 else "Watch" if sahm is not None and sahm >= 0.3 else "Calm" if sahm is not None else None,
+            delta_color="inverse" if sahm is not None and sahm >= 0.5 else "normal",
+        )
+        k[1].metric(
+            "Personal Savings Rate",
+            f"{psavert:.1f}%" if psavert is not None else "N/A",
+            delta=f"{psavert - psavert_avg:+.1f} vs 12M avg" if psavert is not None and psavert_avg is not None else None,
+        )
+        k[2].metric(
+            "M2 YoY Change",
+            f"{m2_yoy:+.2f}%" if m2_yoy is not None else "N/A",
+            delta="Liquidity drain" if m2_yoy is not None and m2_yoy < 0 else "Liquidity expanding" if m2_yoy is not None else None,
+            delta_color="inverse" if m2_yoy is not None and m2_yoy < 0 else "normal",
+        )
+        k[3].metric(
+            "UMich Consumer Sentiment",
+            f"{umich:.1f}" if umich is not None else "N/A",
+            delta=f"{umich_delta:+.1f} vs prior" if umich_delta is not None else None,
+        )
+        k[4].metric(
+            "IG / HY Credit Spread",
+            f"{ig:.0f} / {hy:.0f} bp" if ig is not None and hy is not None else "N/A",
+            delta="Credit stress building" if ig is not None and ig > 150 else None,
+            delta_color="inverse",
+        )
 
 
 if not hasattr(st, "_codex_orig_metric"):
@@ -3779,6 +3913,246 @@ def _get_val(fred, sid):
     return (fred.get(sid) or {}).get("value")
 
 
+def _safe_float(value):
+    try:
+        if value is None:
+            return None
+        v = float(value)
+        if np.isnan(v) or np.isinf(v):
+            return None
+        return v
+    except Exception:
+        return None
+
+
+def _hist_points(fred, key, ascending=True):
+    rows = []
+    for item in fred.get(key, []) or []:
+        try:
+            value, date = item
+            value = float(value)
+            rows.append({"date": str(date), "value": value})
+        except Exception:
+            continue
+    rows = list(reversed(rows)) if ascending else rows
+    return rows
+
+
+def _hist_values(fred, key, ascending=True):
+    return [p["value"] for p in _hist_points(fred, key, ascending=ascending)]
+
+
+def _hist_latest_delta(fred, key, periods=1):
+    values = _hist_values(fred, key, ascending=True)
+    if len(values) <= periods:
+        return None
+    return values[-1] - values[-1 - periods]
+
+
+def _hist_average(fred, key, periods=12):
+    values = _hist_values(fred, key, ascending=True)
+    values = values[-periods:] if periods else values
+    return sum(values) / len(values) if values else None
+
+
+def _hist_latest(fred, key):
+    values = _hist_values(fred, key, ascending=True)
+    return values[-1] if values else None
+
+
+def _normalize_score(value, low, high, invert=False):
+    v = _safe_float(value)
+    if v is None or high == low:
+        return None
+    score = max(0.0, min(100.0, (v - low) / (high - low) * 100.0))
+    return round(100.0 - score if invert else score, 1)
+
+
+def _z_score_to_0_100(value, history_values, invert=False):
+    v = _safe_float(value)
+    vals = [float(x) for x in history_values or [] if _safe_float(x) is not None]
+    if v is None or len(vals) < 6:
+        return None
+    mean = sum(vals) / len(vals)
+    std = float(np.std(vals)) or 1.0
+    score = max(0.0, min(100.0, 50.0 + ((v - mean) / std) * 10.0))
+    return round(100.0 - score if invert else score, 1)
+
+
+def _avg_available(scores):
+    vals = [float(s) for s in scores if s is not None]
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
+def _weighted_available(weighted_scores):
+    vals = [(float(score), float(weight)) for score, weight in weighted_scores if score is not None]
+    total_w = sum(weight for _, weight in vals)
+    return round(sum(score * weight for score, weight in vals) / total_w, 1) if total_w else None
+
+
+def compute_m2_yoy_change(fred):
+    current = _hist_latest(fred, "M2SL_YOY_HIST")
+    if current is not None:
+        return round(current, 2)
+    values = _hist_values(fred, "M2SL_HIST", ascending=True)
+    if len(values) < 13 or values[-13] == 0:
+        return None
+    return round((values[-1] / values[-13] - 1.0) * 100.0, 2)
+
+
+def compute_real_wage_growth(fred):
+    wage = _get_val(fred, "CES0500000003")
+    cpi = _get_val(fred, "CPIAUCSL")
+    if wage is None or cpi is None:
+        return None
+    return round(float(wage) - float(cpi), 2)
+
+
+def compute_dxy_trend(mkt):
+    dxy = (mkt.get("DX-Y.NYB") or {}).get("value") if mkt else None
+    hist = fetch_yfinance_close_history("DX-Y.NYB", period="6mo", interval="1d")
+    values = [p["value"] for p in hist]
+    if len(values) < 50:
+        return {
+            "value": dxy,
+            "ma20": None,
+            "ma50": None,
+            "trend": "Insufficient data",
+            "strengthening": False,
+            "history": hist,
+        }
+    ma20 = sum(values[-20:]) / 20
+    ma50 = sum(values[-50:]) / 50
+    strengthening = ma20 > ma50
+    return {
+        "value": dxy if dxy is not None else values[-1],
+        "ma20": round(ma20, 2),
+        "ma50": round(ma50, 2),
+        "trend": "Strengthening" if strengthening else "Weakening",
+        "strengthening": strengthening,
+        "history": hist,
+    }
+
+
+def compute_gs_style_composites(fred, mkt, fg=None, opts=None, cape=None):
+    opts = opts or {}
+    fg = fg or {}
+    cape = cape or {}
+    dxy_v = (mkt.get("DX-Y.NYB") or {}).get("value") if mkt else None
+    vix_v = (mkt.get("^VIX") or {}).get("value") if mkt else None
+    move_v = (mkt.get("^MOVE") or {}).get("value") if mkt else None
+    cape_v = cape.get("value")
+
+    fci_components = {
+        "Fed Funds": _z_score_to_0_100(_get_val(fred, "DFF"), _hist_values(fred, "DFF_HIST")),
+        "10Y Yield": _z_score_to_0_100(_get_val(fred, "DGS10"), _hist_values(fred, "DGS10_HIST")),
+        "HY Spread": _z_score_to_0_100(_get_val(fred, "BAMLH0A0HYM2"), _hist_values(fred, "HY_SPREAD_HIST")),
+        "IG Spread": _z_score_to_0_100(_get_val(fred, "BAMLC0A0CM"), _hist_values(fred, "IG_SPREAD_HIST")),
+        "DXY": _normalize_score(dxy_v, 90, 110),
+        "CAPE": _normalize_score(cape_v, 18, 40),
+    }
+    fci_score = _avg_available(fci_components.values())
+    fci_history = []
+    dff_h = _hist_points(fred, "DFF_HIST")
+    dgs10_h = _hist_points(fred, "DGS10_HIST")
+    hy_h = _hist_points(fred, "HY_SPREAD_HIST")
+    ig_h = _hist_points(fred, "IG_SPREAD_HIST")
+    for i in range(-12, 0):
+        try:
+            vals = [
+                _normalize_score(dff_h[i]["value"], 0, 6) if len(dff_h) >= abs(i) else None,
+                _normalize_score(dgs10_h[i]["value"], 1, 6) if len(dgs10_h) >= abs(i) else None,
+                _normalize_score(hy_h[i]["value"], 250, 800) if len(hy_h) >= abs(i) else None,
+                _normalize_score(ig_h[i]["value"], 60, 250) if len(ig_h) >= abs(i) else None,
+                _normalize_score(dxy_v, 90, 110),
+                _normalize_score(cape_v, 18, 40),
+            ]
+            score = _avg_available(vals)
+            date = (dff_h[i]["date"] if len(dff_h) >= abs(i) else str(i))
+            if score is not None:
+                fci_history.append({"date": date, "value": score})
+        except Exception:
+            continue
+
+    sahm = _get_val(fred, "SAHMREALTIME")
+    t10y2y = _get_val(fred, "T10Y2Y")
+    lei_values = _hist_values(fred, "LEI_HIST", ascending=True)
+    lei_yoy = ((lei_values[-1] / lei_values[-13] - 1) * 100) if len(lei_values) >= 13 and lei_values[-13] else None
+    unrate_delta_3m = _hist_latest_delta(fred, "UNRATE_HIST", periods=3)
+    rec_components = {
+        "Sahm Rule": _normalize_score(sahm, 0.0, 0.8),
+        "Yield Curve": _normalize_score(t10y2y, 1.0, -1.0),
+        "LEI YoY": _normalize_score(lei_yoy, 3.0, -6.0),
+        "HY Spread": _normalize_score(_get_val(fred, "BAMLH0A0HYM2"), 250, 800),
+        "Unemployment 3M Delta": _normalize_score(unrate_delta_3m, -0.2, 0.8),
+    }
+    recession_score = _weighted_available([
+        (rec_components["Sahm Rule"], 0.30),
+        (rec_components["Yield Curve"], 0.25),
+        (rec_components["LEI YoY"], 0.20),
+        (rec_components["HY Spread"], 0.15),
+        (rec_components["Unemployment 3M Delta"], 0.10),
+    ])
+    recession_history = []
+    sahm_h = _hist_points(fred, "SAHMREALTIME_HIST")
+    curve_h = _hist_points(fred, "T10Y2Y_HIST")
+    for i in range(-12, 0):
+        try:
+            score = _weighted_available([
+                (_normalize_score(sahm_h[i]["value"], 0.0, 0.8) if len(sahm_h) >= abs(i) else None, 0.30),
+                (_normalize_score(curve_h[i]["value"], 1.0, -1.0) if len(curve_h) >= abs(i) else None, 0.25),
+                (_normalize_score(hy_h[i]["value"], 250, 800) if len(hy_h) >= abs(i) else None, 0.15),
+            ])
+            date = (sahm_h[i]["date"] if len(sahm_h) >= abs(i) else str(i))
+            if score is not None:
+                recession_history.append({"date": date, "value": score})
+        except Exception:
+            continue
+
+    risk_components = {
+        "VIX": _normalize_score(vix_v, 10, 45, invert=True),
+        "MOVE": _normalize_score(move_v, 60, 180, invert=True),
+        "PCR": _normalize_score(opts.get("pcr"), 0.6, 1.4, invert=True),
+        "HY Spread": _normalize_score(_get_val(fred, "BAMLH0A0HYM2"), 250, 800, invert=True),
+        "Fear & Greed": _normalize_score(fg.get("value"), 0, 100),
+    }
+    risk_score = _avg_available(risk_components.values())
+    if risk_score is None:
+        risk_label, risk_color = "Insufficient data", "#94a3b8"
+    elif risk_score < 25:
+        risk_label, risk_color = "Extreme Fear", "#f87171"
+    elif risk_score < 45:
+        risk_label, risk_color = "Fear", "#f97316"
+    elif risk_score < 55:
+        risk_label, risk_color = "Neutral", "#fbbf24"
+    elif risk_score < 75:
+        risk_label, risk_color = "Greed", "#34d399"
+    else:
+        risk_label, risk_color = "Extreme Greed", "#166534"
+
+    def _surprise(name, hist_key, multiplier=100.0):
+        vals = _hist_values(fred, hist_key, ascending=True)
+        if len(vals) < 2 or vals[-2] == 0:
+            return None
+        return {"name": name, "value": round((vals[-1] - vals[-2]) / abs(vals[-2]) * multiplier, 2)}
+
+    surprises = [
+        _surprise("NFP", "PAYEMS_HIST", 100.0),
+        _surprise("CPI", "CPI_HIST", 100.0),
+        _surprise("GDP", "GDP_HIST", 100.0),
+        _surprise("ISM PMI", "NAPM_HIST", 100.0),
+    ]
+    surprises = [s for s in surprises if s is not None]
+    surprise_score = round(sum(s["value"] for s in surprises) / len(surprises), 2) if surprises else None
+
+    return {
+        "fci": {"score": fci_score, "components": fci_components, "history": fci_history},
+        "recession": {"score": recession_score, "components": rec_components, "history": recession_history},
+        "risk_appetite": {"score": risk_score, "label": risk_label, "color": risk_color, "components": risk_components},
+        "macro_surprise": {"score": surprise_score, "components": surprises},
+    }
+
+
 def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bls):
     critical_checks = [
         ("GDPNow", _get_val(fred, "GDPNOW") or _get_val(fred, "A191RL1Q225SBEA")),
@@ -3797,6 +4171,8 @@ def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bl
             ("FRED", len([k for k in FRED_SERIES if k in fred]), f"{len(_FRED_ERRORS)} errors"),
             ("Treasury", len(treasury), "ok" if treasury else "no rows"),
             ("Yahoo Finance", len(mkt), "ok" if mkt else "empty"),
+            ("Composite Inputs", len([v for v in [_get_val(fred, "SAHMREALTIME"), _get_val(fred, "PSAVERT"), _get_val(fred, "M2SL"), _get_val(fred, "BAMLC0A0CM"), (mkt.get("DX-Y.NYB") or {}).get("value")] if v is not None]), "Sahm/savings/M2/IG/DXY"),
+            ("Global Macro", len([v for v in [(mkt.get("EURUSD=X") or {}).get("value"), (mkt.get("CNH=X") or mkt.get("CNY=X") or {}).get("value"), (mkt.get("JPY=X") or {}).get("value")] if v is not None]), "FX signals"),
             ("Fear & Greed", 1 if fg else 0, fg.get("source_tag", "missing") if fg else "missing"),
             ("NAAIM", 1 if naaim else 0, naaim.get("date", "missing") if naaim else "missing"),
             ("CAPE", 1 if cape else 0, cape.get("quality", "missing") if cape else "missing"),
@@ -4227,6 +4603,177 @@ def make_fear_greed_gauge(fg):
         min_val=0, max_val=100,
         thresholds=[(25,"#f87171"),(45,"#f97316"),(55,"#fbbf24"),(75,"#86efac"),(100,"#34d399")],
     )
+
+
+def make_composite_gauge(value, title, subtitle="", low_label="Low", high_label="High"):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=0 if value is None else float(value),
+        title={"text": f"{title}<br><span style='font-size:11px;color:#94a3b8'>{subtitle}</span>"},
+        number={"suffix": "/100", "font": {"size": 26}},
+        gauge={
+            "axis": {"range": [0, 100], "tickcolor": "#94a3b8"},
+            "bar": {"color": "#3b82f6" if value is None else "#34d399" if value < 40 else "#fbbf24" if value < 65 else "#f87171"},
+            "bgcolor": CHART_BG,
+            "bordercolor": "#1e2d3d",
+            "steps": [
+                {"range": [0, 40], "color": "rgba(52,211,153,0.18)"},
+                {"range": [40, 65], "color": "rgba(251,191,36,0.18)"},
+                {"range": [65, 100], "color": "rgba(248,113,113,0.20)"},
+            ],
+        },
+    ))
+    fig.add_annotation(text=low_label, x=0.14, y=0.06, xref="paper", yref="paper",
+                       showarrow=False, font=dict(color="#94a3b8", size=10))
+    fig.add_annotation(text=high_label, x=0.86, y=0.06, xref="paper", yref="paper",
+                       showarrow=False, font=dict(color="#94a3b8", size=10))
+    fig.update_layout(
+        template=DARK_TEMPLATE, paper_bgcolor=PAPER_BG,
+        height=240, margin=dict(l=25, r=25, t=55, b=20),
+    )
+    return fig
+
+
+def make_composite_history_chart(history, title, y_title="Score"):
+    fig = go.Figure()
+    if not history:
+        fig.update_layout(
+            title=f"{title} — insufficient history",
+            template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+            height=260, margin=dict(l=40, r=20, t=45, b=30),
+        )
+        return fig
+    dates = [h["date"] for h in history]
+    values = [h["value"] for h in history]
+    colors = ["#34d399" if v < 40 else "#fbbf24" if v < 65 else "#f87171" for v in values]
+    fig.add_trace(go.Scatter(
+        x=dates, y=values, mode="lines+markers",
+        line=dict(color="#3b82f6", width=2),
+        marker=dict(color=colors, size=7),
+        hovertemplate="%{x}<br>Score: %{y:.1f}/100<extra></extra>",
+    ))
+    fig.add_hrect(y0=0, y1=40, fillcolor="rgba(52,211,153,0.08)", line_width=0)
+    fig.add_hrect(y0=40, y1=65, fillcolor="rgba(251,191,36,0.08)", line_width=0)
+    fig.add_hrect(y0=65, y1=100, fillcolor="rgba(248,113,113,0.10)", line_width=0)
+    fig.update_layout(
+        title=dict(text=title, font_size=13),
+        yaxis=dict(title=y_title, range=[0, 100]),
+        xaxis_title="Date",
+        template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+        height=260, margin=dict(l=45, r=20, t=45, b=30),
+    )
+    return fig
+
+
+def make_sahm_rule_gauge(fred):
+    value = _get_val(fred, "SAHMREALTIME")
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=0 if value is None else float(value),
+        title={"text": "Sahm Rule Real-Time<br><span style='font-size:11px;color:#94a3b8'>0.5 = recession signal</span>"},
+        number={"suffix": " pts", "font": {"size": 26}},
+        gauge={
+            "axis": {"range": [0, 1.2], "tickcolor": "#94a3b8"},
+            "bar": {"color": "#94a3b8" if value is None else "#f87171" if value >= 0.5 else "#fbbf24" if value >= 0.3 else "#34d399"},
+            "steps": [
+                {"range": [0, 0.3], "color": "rgba(52,211,153,0.18)"},
+                {"range": [0.3, 0.5], "color": "rgba(251,191,36,0.18)"},
+                {"range": [0.5, 1.2], "color": "rgba(248,113,113,0.22)"},
+            ],
+            "threshold": {"line": {"color": "#f87171", "width": 3}, "thickness": 0.8, "value": 0.5},
+            "bgcolor": CHART_BG,
+            "bordercolor": "#1e2d3d",
+        },
+    ))
+    fig.update_layout(
+        template=DARK_TEMPLATE, paper_bgcolor=PAPER_BG,
+        height=240, margin=dict(l=25, r=25, t=55, b=20),
+    )
+    return fig
+
+
+def make_fred_history_line_chart(fred, key, title, y_title="", color="#3b82f6", zero_line=False):
+    history = _hist_points(fred, key, ascending=True)
+    fig = go.Figure()
+    if not history:
+        fig.update_layout(
+            title=f"{title} — insufficient data",
+            template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+            height=260, margin=dict(l=45, r=20, t=45, b=30),
+        )
+        return fig
+    fig.add_trace(go.Scatter(
+        x=[h["date"] for h in history],
+        y=[h["value"] for h in history],
+        mode="lines+markers",
+        line=dict(color=color, width=2),
+        marker=dict(size=5, color=color),
+        hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
+    ))
+    if zero_line:
+        fig.add_hline(y=0, line_color="#94a3b8", line_dash="dash", line_width=1)
+    fig.update_layout(
+        title=dict(text=title, font_size=13),
+        xaxis_title="Date", yaxis_title=y_title,
+        template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+        height=260, margin=dict(l=45, r=20, t=45, b=30),
+    )
+    return fig
+
+
+def make_credit_spread_comparison_chart(fred):
+    hy = _hist_points(fred, "HY_SPREAD_HIST", ascending=True)
+    ig = _hist_points(fred, "IG_SPREAD_HIST", ascending=True)
+    fig = go.Figure()
+    if hy:
+        fig.add_trace(go.Scatter(
+            x=[h["date"] for h in hy], y=[h["value"] for h in hy],
+            mode="lines", name="HY Spread", line=dict(color="#f87171", width=2),
+        ))
+    if ig:
+        fig.add_trace(go.Scatter(
+            x=[h["date"] for h in ig], y=[h["value"] for h in ig],
+            mode="lines", name="IG Spread", line=dict(color="#fbbf24", width=2),
+        ))
+    if not hy and not ig:
+        fig.update_layout(title="Credit spread comparison — insufficient data")
+    fig.update_layout(
+        title=dict(text="HY vs IG Credit Spread Comparison", font_size=13),
+        xaxis_title="Date", yaxis_title="Spread (bp)",
+        template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+        height=300, margin=dict(l=45, r=20, t=45, b=30),
+        legend=dict(orientation="h", y=1.12),
+    )
+    return fig
+
+
+def make_macro_surprise_chart(composite_data):
+    rows = (composite_data or {}).get("macro_surprise", {}).get("components", [])
+    fig = go.Figure()
+    if not rows:
+        fig.update_layout(
+            title="Macro Surprise Index — insufficient data",
+            template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+            height=260, margin=dict(l=45, r=20, t=45, b=30),
+        )
+        return fig
+    values = [r["value"] for r in rows]
+    fig.add_trace(go.Bar(
+        x=[r["name"] for r in rows],
+        y=values,
+        marker_color=["#34d399" if v >= 0 else "#f87171" for v in values],
+        text=[f"{v:+.2f}" for v in values],
+        textposition="outside",
+        hovertemplate="%{x}<br>Surprise proxy: %{y:+.2f}<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title=dict(text="Macro Surprise Proxy — Actual Change vs Prior Release", font_size=13),
+        yaxis_title="Relative change proxy",
+        template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+        height=280, margin=dict(l=45, r=20, t=45, b=30),
+    )
+    return fig
 
 
 def make_naaim_gauge(naaim):
@@ -6232,6 +6779,8 @@ def generate_html_report(
     panic_data = panic_data or {}
     cta_model = cta_model or {}
     sg_cta = sg_cta or {}
+    composites = compute_gs_style_composites(fred, mkt, fg=fg, opts=opts, cape=cape)
+    dxy_trend = compute_dxy_trend(mkt)
 
     def _esc(text):
         return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -6368,6 +6917,21 @@ def generate_html_report(
         [_esc("Amihud Illiquidity"), _esc("N/A" if not amihud_data or amihud_data.get("value") is None else f"{amihud_data['value']:.6f}"), _esc(amihud_data.get("ticker", "SPY") if amihud_data else "Missing")],
     ]
 
+    gs_rows = [
+        [_esc("FCI Score"), _esc(_num(composites.get("fci", {}).get("score"), suffix="/100", digits=1)), _esc("0=loose, 100=tight")],
+        [_esc("Recession Probability Composite"), _esc(_num(composites.get("recession", {}).get("score"), suffix="/100", digits=1)), _esc("Sahm/curve/LEI/credit/labor proxy")],
+        [_esc("Risk Appetite"), _esc(_num(composites.get("risk_appetite", {}).get("score"), suffix="/100", digits=1)), _esc(composites.get("risk_appetite", {}).get("label", "Unavailable"))],
+        [_esc("Macro Surprise"), _esc(_num(composites.get("macro_surprise", {}).get("score"), digits=2)), _esc("Actual change vs prior release proxy")],
+    ]
+
+    global_rows = [
+        [_esc("DXY Trend"), _esc(dxy_trend.get("trend", "N/A")), _esc(f"20D {dxy_trend.get('ma20')} / 50D {dxy_trend.get('ma50')}")],
+        [_esc("EUR/USD"), _esc(_num((mkt.get("EURUSD=X") or {}).get("value"), digits=4)), _esc("Yahoo Finance")],
+        [_esc("USD/CNH"), _esc(_num((mkt.get("CNH=X") or mkt.get("CNY=X") or {}).get("value"), digits=3)), _esc("Yahoo Finance")],
+        [_esc("USD/JPY"), _esc(_num((mkt.get("JPY=X") or {}).get("value"), digits=2)), _esc("Yahoo Finance")],
+        [_esc("EMB Spread Proxy"), _esc(_fmt(_get_val(fred, "BAMLH0A0HYM2"), "bp")), _esc("HY spread proxy; EM feed not connected")],
+    ]
+
     institutional_rows = [
         [_esc("Participation Score"), _esc("N/A" if inst_score.get("score") is None else f"{inst_score['score']:.2f}"), _esc(inst_score.get("label", "Unavailable"))],
         [_esc("Institutional MMF Assets"), _esc(_fmt(_get_val(fred, "WRMFNS"), "B")), _esc("FRED WRMFNS")],
@@ -6409,6 +6973,9 @@ def generate_html_report(
         [_esc("Unemployment Rate"), _esc(_fmt(_get_val(fred, "UNRATE"), "%")), _esc("FRED")],
         [_esc("Initial Claims"), _esc(_fmt(_get_val(fred, "ICSA"), "K")), _esc("FRED")],
         [_esc("Average Hourly Earnings"), _esc(_fmt(_get_val(fred, "CES0500000003"), "%")), _esc("FRED")],
+        [_esc("Personal Savings Rate"), _esc(_fmt(_get_val(fred, "PSAVERT"), "%")), _esc("FRED")],
+        [_esc("Real Wage Growth"), _esc(_num(compute_real_wage_growth(fred), suffix="%", digits=2)), _esc("Wage YoY minus CPI YoY")],
+        [_esc("Sahm Rule"), _esc(_num(_get_val(fred, "SAHMREALTIME"), suffix=" pts", digits=2)), _esc("0.5 = recession signal")],
         [_esc("Nonfarm Payrolls Change"), _esc(_num(((bls.get("nonfarm_payrolls") or {}).get("value")), suffix="k", digits=0)), _esc((bls.get("nonfarm_payrolls") or {}).get("date", "BLS"))],
     ]
 
@@ -6659,6 +7226,8 @@ tbody tr:last-child td {{ border-bottom:none; }}
     <a href="#sentiment">Sentiment</a>
     <a href="#options">Options</a>
     <a href="#liquidity">Liquidity</a>
+    <a href="#composites">Composites</a>
+    <a href="#global">Global</a>
     <a href="#flows">Flows</a>
     <a href="#news">News</a>
     <a href="#fred">FRED</a>
@@ -6681,6 +7250,8 @@ tbody tr:last-child td {{ border-bottom:none; }}
     <section class="section">{_table_block("Sentiment Framework Snapshot", sentiment_framework_rows, ["Indicator", "Value", "Context"])}</section>
     <section class="section" id="options">{_table_block("Options & Derivatives Snapshot", options_rows, ["Indicator", "Value", "Context"])}</section>
     <section class="section" id="liquidity">{_table_block("Liquidity Conditions Snapshot", liquidity_rows, ["Indicator", "Value", "Context"])}</section>
+    <section class="section" id="composites">{_table_block("GS-Style Composites", gs_rows, ["Composite", "Value", "Context"])}</section>
+    <section class="section" id="global">{_table_block("International / Global Macro", global_rows, ["Indicator", "Value", "Context"])}</section>
     <section class="section" id="flows">{_table_block("Institutional Flows Snapshot", institutional_rows, ["Indicator", "Value", "Context"])}</section>
     <section class="section">{_table_block("CTA Trend-Following Snapshot", cta_rows, ["Signal", "Value", "Context"])}</section>
 
@@ -6709,6 +7280,11 @@ def render_macro_alerts(fred):
     rec_v  = _get_val(fred, "RECPROUSM156N")
     un_v   = _get_val(fred, "UNRATE")
     hy_v   = _get_val(fred, "BAMLH0A0HYM2")
+    sahm_v = _get_val(fred, "SAHMREALTIME")
+    psavert_v = _get_val(fred, "PSAVERT")
+    ig_v = _get_val(fred, "BAMLC0A0CM")
+    m2_yoy = compute_m2_yoy_change(fred)
+    umich_v = _get_val(fred, "UMCSENT")
 
     if gdp_v is not None:
         if gdp_v < 0:
@@ -6732,6 +7308,23 @@ def render_macro_alerts(fred):
 
     if hy_v is not None and hy_v > 500:
         st.error(f"💥 HY credit spread at {hy_v:.0f} bp — credit stress elevated")
+
+    if sahm_v is not None:
+        if sahm_v >= 0.5:
+            st.error("🔴 Sahm Rule triggered — real-time recession signal fired")
+        elif sahm_v >= 0.3:
+            st.warning(f"⚠️ Sahm Rule at {sahm_v:.2f} — approaching recession threshold")
+    if psavert_v is not None and psavert_v < 3.5:
+        st.warning(f"⚠️ Personal savings rate at {psavert_v:.1f}% — consumer buffer critically thin")
+    if ig_v is not None:
+        if ig_v > 200:
+            st.error(f"🔴 IG credit spread at {ig_v:.0f}bp — credit market seizing up")
+        elif ig_v > 150:
+            st.warning(f"⚠️ IG credit spread at {ig_v:.0f}bp — investment-grade stress building")
+    if m2_yoy is not None and m2_yoy < 0:
+        st.warning("⚠️ M2 money supply contracting YoY — liquidity headwind")
+    if umich_v is not None and umich_v < 65:
+        st.warning(f"⚠️ Consumer sentiment at {umich_v:.1f} — household confidence deteriorating")
 
 
 def render_labor_alerts(fred):
@@ -6985,6 +7578,150 @@ def render_metals(mkt):
             f'</div>',
             unsafe_allow_html=True,
         )
+
+
+def render_gs_style_composites(fred, mkt, fg, opts, cape):
+    composites = compute_gs_style_composites(fred, mkt, fg=fg, opts=opts, cape=cape)
+    fci = composites["fci"]
+    rec = composites["recession"]
+    risk = composites["risk_appetite"]
+    surprise = composites["macro_surprise"]
+
+    st.subheader("GS-Style Composite Dashboard")
+    st.caption(
+        "These are public-data approximations of common macro composite frameworks. "
+        "They are not official Goldman Sachs indices."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.plotly_chart(
+            make_composite_gauge(fci.get("score"), "Financial Conditions Index", "0 = loose, 100 = tight", "Loose", "Tight"),
+            use_container_width=True,
+            key="chart_gs_fci_gauge",
+        )
+    with c2:
+        st.plotly_chart(
+            make_composite_gauge(rec.get("score"), "Recession Probability Composite", "Public recession-risk proxy", "Low", "High"),
+            use_container_width=True,
+            key="chart_gs_recession_gauge",
+        )
+    with c3:
+        st.plotly_chart(
+            make_composite_gauge(risk.get("score"), "Risk Appetite Indicator", risk.get("label", ""), "Fear", "Greed"),
+            use_container_width=True,
+            key="chart_gs_risk_appetite_gauge",
+        )
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("FCI Score", f"{fci['score']:.1f}/100" if fci.get("score") is not None else "Insufficient data")
+    k2.metric("Recession Probability", f"{rec['score']:.1f}/100" if rec.get("score") is not None else "Insufficient data", delta_color="inverse")
+    k3.metric("Risk Appetite", f"{risk['score']:.1f}/100" if risk.get("score") is not None else "Insufficient data", delta=risk.get("label"))
+    k4.metric("Macro Surprise", f"{surprise['score']:+.2f}" if surprise.get("score") is not None else "Insufficient data")
+
+    st.divider()
+    h1, h2 = st.columns(2)
+    with h1:
+        st.plotly_chart(
+            make_composite_history_chart(fci.get("history"), "FCI Proxy — 12 Month History"),
+            use_container_width=True,
+            key="chart_gs_fci_history",
+        )
+    with h2:
+        st.plotly_chart(
+            make_composite_history_chart(rec.get("history"), "Recession Risk Proxy — 12 Month History"),
+            use_container_width=True,
+            key="chart_gs_recession_history",
+        )
+
+    st.divider()
+    s1, s2 = st.columns([1, 1])
+    with s1:
+        st.subheader("Macro Surprise Index")
+        st.plotly_chart(
+            make_macro_surprise_chart(composites),
+            use_container_width=True,
+            key="chart_gs_macro_surprise",
+        )
+    with s2:
+        st.subheader("Component Readout")
+        for block_name, block in [
+            ("Financial Conditions", fci.get("components", {})),
+            ("Recession Risk", rec.get("components", {})),
+            ("Risk Appetite", risk.get("components", {})),
+        ]:
+            st.markdown(f"**{block_name}**")
+            for label, value in block.items():
+                color = "#94a3b8" if value is None else "#34d399" if value < 40 else "#fbbf24" if value < 65 else "#f87171"
+                st.markdown(
+                    f'<div style="display:flex;justify-content:space-between;border-bottom:1px solid #1e2d3d;'
+                    f'padding:4px 0"><span style="color:#94a3b8">{label}</span>'
+                    f'<span style="color:{color};font-weight:700">'
+                    f'{"N/A" if value is None else f"{value:.1f}"}</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+
+def render_global_macro(fred, mkt):
+    dxy = compute_dxy_trend(mkt)
+    dxy_v = dxy.get("value")
+    eurusd = (mkt.get("EURUSD=X") or {}).get("value")
+    usdcnh = (mkt.get("CNH=X") or {}).get("value") or (mkt.get("CNY=X") or {}).get("value")
+    usdjpy = (mkt.get("JPY=X") or {}).get("value")
+    emb_proxy = _get_val(fred, "BAMLH0A0HYM2")
+
+    if dxy_v is not None and dxy.get("strengthening") and dxy_v > 103:
+        st.warning("⚠️ Dollar strengthening — global financial conditions tightening")
+    if dxy_v is not None and dxy_v > 107:
+        st.error("🔴 DXY above 107 — historical EM stress threshold breached")
+
+    st.subheader("Global Macro Dashboard")
+    st.caption("FX, dollar pressure, and global growth placeholders. PMI fields show placeholders where no free stable API is connected.")
+
+    k = st.columns(6)
+    k[0].metric("EUR/USD", f"{eurusd:.4f}" if eurusd is not None else "N/A")
+    k[1].metric("USD/CNH", f"{usdcnh:.3f}" if usdcnh is not None else "N/A")
+    k[2].metric("USD/JPY", f"{usdjpy:.2f}" if usdjpy is not None else "N/A")
+    k[3].metric("DXY Trend", dxy.get("trend", "N/A"), delta=f"20D {dxy.get('ma20')} / 50D {dxy.get('ma50')}" if dxy.get("ma20") else None)
+    k[4].metric("EMB Spread Proxy", f"{emb_proxy:.0f} bp" if emb_proxy is not None else "N/A", help="Using HY credit spread as a proxy because EM spread feed is not connected.")
+    k[5].metric("DXY", f"{dxy_v:.2f}" if dxy_v is not None else "N/A")
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        dxy_history = [{"date": p["date"], "value": p["value"]} for p in dxy.get("history", [])]
+        fig = go.Figure()
+        if dxy_history:
+            fig.add_trace(go.Scatter(
+                x=[p["date"] for p in dxy_history],
+                y=[p["value"] for p in dxy_history],
+                mode="lines",
+                line=dict(color="#3b82f6", width=2),
+                name="DXY",
+            ))
+            if dxy.get("ma20"):
+                fig.add_hline(y=dxy["ma20"], line_dash="dot", line_color="#fbbf24", annotation_text="20D MA")
+            if dxy.get("ma50"):
+                fig.add_hline(y=dxy["ma50"], line_dash="dot", line_color="#94a3b8", annotation_text="50D MA")
+        fig.update_layout(
+            title=dict(text="DXY Trend — 20D vs 50D Moving Average", font_size=13),
+            template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
+            height=300, margin=dict(l=45, r=20, t=45, b=30),
+            xaxis_title="Date", yaxis_title="DXY",
+        )
+        st.plotly_chart(fig, use_container_width=True, key="chart_global_dxy_trend")
+    with c2:
+        st.markdown(
+            """
+**Global PMI placeholders**
+
+- Euro Area Composite PMI: connect a licensed S&P Global/Markit feed or approved FRED equivalent when available.
+- China PMI: connect Caixin/NBS API or a licensed macro calendar feed.
+- Until then, this panel intentionally avoids fabricating PMI values.
+            """
+        )
+        st.info("Euro Area Composite PMI: placeholder — data provider not connected.")
+        st.info("China PMI: placeholder — connect Caixin/NBS source when available.")
 
 
 def render_options_derivatives(mkt, opts, skew_idx, vix_term, vix_v,
@@ -7386,6 +8123,40 @@ def render_liquidity_conditions(fred, mkt, treasury, sofr_data, amihud_data):
         st.plotly_chart(make_liquidity_stress_chart(fred), use_container_width=True, key="chart_liq_stress")
     with r2c2:
         st.plotly_chart(make_yield_spread_history_chart(fred), use_container_width=True, key="chart_yield_spread_hist")
+
+    real10 = None
+    dgs10 = _get_val(fred, "DGS10")
+    breakeven10 = _get_val(fred, "T10YIE")
+    if dgs10 is not None and breakeven10 is not None:
+        real10 = round(float(dgs10) - float(breakeven10), 2)
+    r2k1, r2k2, r2k3 = st.columns(3)
+    r2k1.metric(
+        "M2 YoY Change",
+        f"{compute_m2_yoy_change(fred):+.2f}%" if compute_m2_yoy_change(fred) is not None else "N/A",
+        delta="Liquidity drain" if compute_m2_yoy_change(fred) is not None and compute_m2_yoy_change(fred) < 0 else "Liquidity expanding" if compute_m2_yoy_change(fred) is not None else None,
+        delta_color="inverse" if compute_m2_yoy_change(fred) is not None and compute_m2_yoy_change(fred) < 0 else "normal",
+    )
+    r2k2.metric("IG Credit Spread", f"{_get_val(fred, 'BAMLC0A0CM'):.0f} bp" if _get_val(fred, "BAMLC0A0CM") is not None else "N/A", delta_color="inverse")
+    r2k3.metric(
+        "Real 10Y Yield",
+        f"{real10:.2f}%" if real10 is not None else "N/A",
+        delta="Restrictive" if real10 is not None and real10 > 2.5 else "Normal" if real10 is not None else None,
+        delta_color="inverse" if real10 is not None and real10 > 2.5 else "normal",
+    )
+
+    r2c3, r2c4 = st.columns(2)
+    with r2c3:
+        st.plotly_chart(
+            make_fred_history_line_chart(fred, "M2SL_YOY_HIST", "M2 Money Supply YoY Change — 24M", "%", "#3b82f6", zero_line=True),
+            use_container_width=True,
+            key="chart_liq_m2_yoy",
+        )
+    with r2c4:
+        st.plotly_chart(
+            make_credit_spread_comparison_chart(fred),
+            use_container_width=True,
+            key="chart_liq_ig_hy_spreads",
+        )
 
     st.divider()
 
@@ -9293,6 +10064,8 @@ def build_sidebar():
             "📰 News & Signals",
             "Liquidity Conditions",
             "Institutional Flows",
+            "GS-Style Composites",
+            "Global Macro",
             "🤖 AI Macro Analysis",
         ]
         visible_sections = st.multiselect(
@@ -9431,6 +10204,8 @@ def main():
         "📰 News & Signals",
         "Liquidity Conditions",
         "Institutional Flows",
+        "GS-Style Composites",
+        "Global Macro",
         "Sentiment Framework",
         "🤖 AI Macro Analysis",
     ]
@@ -9588,6 +10363,51 @@ def main():
                            delta=f"{pce_v-2:.2f}% vs 2% target" if pce_v else None,
                            delta_color="inverse")
                 kc2.metric("Retail Sales", f"${ret_v:.1f}B" if ret_v else "N/A")
+
+            st.divider()
+            st.subheader("Household Buffer & Recession Trigger")
+            e1, e2, e3, e4 = st.columns(4)
+            psavert_v = _get_val(fred, "PSAVERT")
+            psavert_avg = _hist_average(fred, "PSAVERT_HIST", periods=12)
+            real_wage = compute_real_wage_growth(fred)
+            umich_v = _get_val(fred, "UMCSENT")
+            umich_delta = _hist_latest_delta(fred, "UMCSENT_HIST", periods=1)
+            sahm_v = _get_val(fred, "SAHMREALTIME")
+            e1.metric(
+                "Personal Savings Rate",
+                f"{psavert_v:.1f}%" if psavert_v is not None else "N/A",
+                delta=f"{psavert_v - psavert_avg:+.1f} vs 12M avg" if psavert_v is not None and psavert_avg is not None else None,
+            )
+            e2.metric(
+                "Real Wage Growth",
+                f"{real_wage:+.2f}%" if real_wage is not None else "N/A",
+                delta="Pay beating inflation" if real_wage is not None and real_wage > 0 else "Inflation beating pay" if real_wage is not None else None,
+                delta_color="normal" if real_wage is not None and real_wage > 0 else "inverse",
+            )
+            e3.metric(
+                "UMich Consumer Sentiment",
+                f"{umich_v:.1f}" if umich_v is not None else "N/A",
+                delta=f"{umich_delta:+.1f} vs prior month" if umich_delta is not None else None,
+            )
+            e4.metric(
+                "Sahm Rule",
+                f"{sahm_v:.2f}" if sahm_v is not None else "N/A",
+                delta="Triggered" if sahm_v is not None and sahm_v >= 0.5 else "Approaching" if sahm_v is not None and sahm_v >= 0.3 else "Below threshold" if sahm_v is not None else None,
+                delta_color="inverse" if sahm_v is not None and sahm_v >= 0.5 else "normal",
+            )
+            le1, le2 = st.columns(2)
+            with le1:
+                st.plotly_chart(
+                    make_fred_history_line_chart(fred, "PSAVERT_HIST", "Personal Savings Rate — 12M Sparkline", "%", "#34d399"),
+                    use_container_width=True,
+                    key="chart_labor_psavert_history",
+                )
+            with le2:
+                st.plotly_chart(
+                    make_sahm_rule_gauge(fred),
+                    use_container_width=True,
+                    key="chart_labor_sahm_gauge",
+                )
 
     # ── TAB 3: MARKETS & SENTIMENT ─────────────────────────────────────────
     if "💱 Markets & Sentiment" in tab_map:
@@ -10042,6 +10862,23 @@ def main():
                 fred, cot_data, ici_data, mmf_history, inst13f,
                 cta_model=cta_model, sg_cta=sg_cta
             )
+
+    if "GS-Style Composites" in tab_map:
+        with tab_map["GS-Style Composites"]:
+            _render_section_refresh(
+                "gs_style_composites",
+                [fetch_fred, fetch_market, fetch_options_indicators, fetch_fear_greed, fetch_shiller_cape],
+            )
+            with st.spinner("Loading composite inputs…"):
+                opts = fetch_options_indicators()
+            render_tab_summary("GS-Style Composites", fred, treasury=treasury, mkt=mkt, fg=fg, naaim=naaim, cape=cape)
+            render_gs_style_composites(fred, mkt, fg, opts, cape)
+
+    if "Global Macro" in tab_map:
+        with tab_map["Global Macro"]:
+            _render_section_refresh("global_macro", [fetch_fred, fetch_market])
+            render_tab_summary("Global Macro", fred, treasury=treasury, mkt=mkt, fg=fg, naaim=naaim, cape=cape)
+            render_global_macro(fred, mkt)
 
     if "Sentiment Framework" in tab_map:
         with tab_map["Sentiment Framework"]:
