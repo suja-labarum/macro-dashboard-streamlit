@@ -1356,9 +1356,11 @@ def fetch_put_call_ratio_live():
     """
     Fetch current intraday put/call ratio from a public CBOE-derived table.
 
+    Primary: Cboe's own public market statistics page.
+    Fallback: PutCallRatio.org CBOE-derived tables.
+
     TradingView symbol USI:PCC is useful visually, but TradingView does not provide
-    a stable public data API for dashboard ingestion. This source exposes the same
-    broad concept directly as HTML tables: total, index, and equity options PCR.
+    a stable public data API for dashboard ingestion.
     """
     try:
         import warnings
@@ -1382,6 +1384,61 @@ def fetch_put_call_ratio_live():
                 )
                 r.raise_for_status()
                 return r.text
+
+        def _normalize_pcr_table(df, label):
+            df = df.copy()
+            df.columns = [str(c).strip().lower().replace(" ", "_").replace("/", "_") for c in df.columns]
+            ratio_col = next((c for c in df.columns if "p_c" in c or "ratio" in c), None)
+            if ratio_col is None or "time" not in df.columns:
+                return None
+            df[ratio_col] = pd.to_numeric(df[ratio_col], errors="coerce")
+            df = df.dropna(subset=[ratio_col])
+            if df.empty:
+                return None
+            latest = df.iloc[-1]
+            return {
+                "label": label,
+                "time": str(latest.get("time", "")),
+                "calls": int(float(latest.get("calls", 0) or 0)),
+                "puts": int(float(latest.get("puts", 0) or 0)),
+                "total": int(float(latest.get("total", 0) or 0)),
+                "pcr": round(float(latest[ratio_col]), 2),
+                "intraday": [
+                    {"time": str(r.get("time", "")), "pcr": round(float(r[ratio_col]), 2)}
+                    for _, r in df.iterrows()
+                    if pd.notna(r.get(ratio_col))
+                ],
+            }
+
+        # Official Cboe market statistics. The page publishes Total, Index, and
+        # Equity option tables with intraday P/C ratios.
+        try:
+            html = _fetch_text("https://www.cboe.com/us/options/market_statistics/market/", timeout=12)
+            dfs = pd.read_html(io.StringIO(html))
+            pcr_tables = []
+            for df in dfs:
+                cols = {str(c).strip().lower() for c in df.columns}
+                if {"time", "calls", "puts", "total"}.issubset(cols) and any("p/c" in c or "ratio" in c for c in cols):
+                    pcr_tables.append(df)
+            if pcr_tables:
+                total = _normalize_pcr_table(pcr_tables[0], "Total Options") if len(pcr_tables) >= 1 else None
+                index = _normalize_pcr_table(pcr_tables[1], "Index Options") if len(pcr_tables) >= 2 else None
+                equity = _normalize_pcr_table(pcr_tables[2], "Equity Options") if len(pcr_tables) >= 3 else None
+                primary = total or equity or index
+                if primary:
+                    update_m = re.search(r"Data as of\s*([^.<]+)", html, re.I)
+                    return {
+                        "value": primary.get("pcr"),
+                        "time": primary.get("time"),
+                        "date": str(datetime.date.today()),
+                        "last_update": update_m.group(1).strip() if update_m else None,
+                        "source": "Cboe official market statistics intraday total options PCR",
+                        "total_options": total,
+                        "index_options": index,
+                        "equity_options": equity,
+                    }
+        except Exception:
+            pass
 
         def _parse_table(kind, label):
             html = _fetch_text(f"https://putcallratio.org/data/_data{kind}.html")
@@ -4194,6 +4251,32 @@ def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bl
             )
             st.caption("Recent FRED fetch errors")
             st.dataframe(fred_errs, use_container_width=True, hide_index=True)
+
+        st.caption("Source provenance audit")
+        source_audit_rows = [
+            ("FRED macro series", "FRED API + FRED graph CSV fallback", "Official", "Federal Reserve Bank of St. Louis aggregation of official/public series."),
+            ("Treasury yield curve", "U.S. Treasury daily rates CSV/XML", "Official", "Direct Treasury feed."),
+            ("SOFR", "New York Fed API, FRED fallback", "Official", "Primary SOFR feed is the NY Fed."),
+            ("BLS labor data", "BLS Public Data API", "Official", "Uses BLS API when available."),
+            ("CFTC COT positioning", "CFTC Public Reporting Environment API", "Official", "Weekly regulator-published futures positioning."),
+            ("13F institutional holdings", "SEC EDGAR / Finnhub fallback", "Official/proxy mix", "SEC is official but quarterly and delayed; Finnhub is a normalized third-party transport."),
+            ("ICI fund flows", "ICI public XLS", "Primary publisher", "ICI is the industry publisher for these flow estimates."),
+            ("GDPNow", "Atlanta Fed page/FRED fallback", "Primary publisher", "Model nowcast; Atlanta Fed states it is not an official Fed forecast."),
+            ("Fear & Greed", "CNN dataviz endpoint/page scrape", "Publisher endpoint", "CNN is the publisher, but the JSON endpoint is unsupported and can change."),
+            ("AAII sentiment", "AAII public pages", "Primary publisher", "AAII is the survey publisher."),
+            ("NAAIM exposure", "NAAIM public page", "Primary publisher", "NAAIM is the survey publisher."),
+            ("CAPE valuation", "multpl.com scrape", "Secondary source", "Best upgrade is Robert Shiller/Yale spreadsheet when reachable."),
+            ("Market quotes, futures, FX, VIX/MOVE", "Yahoo Finance via yfinance", "Unofficial transport", "Good for dashboard context, not an exchange-certified real-time feed."),
+            ("Options chain and GEX", "Yahoo Finance option chains", "Unofficial transport", "Official OPRA/options feeds are licensed; use this as analytical proxy."),
+            ("Put/Call ratio", "Cboe market statistics, PutCallRatio.org fallback", "Official primary + proxy fallback", "Direct Cboe is preferred; fallback is clearly labeled if used."),
+            ("World/news feeds", "Configured RSS/API sources", "Mixed", "Headlines should be treated as source-attributed, not model-generated facts."),
+            ("Global PMI placeholders", "Placeholder text only", "Not connected", "No fabricated PMI values are displayed."),
+        ]
+        source_audit_df = pd.DataFrame(
+            source_audit_rows,
+            columns=["Feed", "Current source", "Provenance", "Notes"],
+        )
+        st.dataframe(source_audit_df, use_container_width=True, hide_index=True)
 
 
 def has_systemic_data_failure(fred, treasury, mkt, fg, naaim, cape):
