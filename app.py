@@ -1615,10 +1615,10 @@ def fetch_sofr_spread():
             return None
 
     try:
-        url = "https://markets.newyorkfed.org/api/rates/sofr/last/5.json"
+        url = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/5.json"
         data = _http_get_json(url, timeout=10)
         rates = data.get("refRates", [])
-        latest = rates[-1] if isinstance(rates, list) and rates else rates if isinstance(rates, dict) else None
+        latest = rates[0] if isinstance(rates, list) and rates else rates if isinstance(rates, dict) else None
         if latest:
             sofr_val = float(latest.get("percentRate", 0))
             sofr_date = latest.get("effectiveDate", str(datetime.date.today()))
