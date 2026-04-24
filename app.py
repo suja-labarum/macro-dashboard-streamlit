@@ -4118,6 +4118,10 @@ def _hist_latest(fred, key):
 
 
 ENERGY_FUTURES_DEFAULT_PATH = "/Users/tazo/Desktop/futures-spreads-clm26-04-23-2026.csv"
+ENERGY_FUTURES_DEFAULT_PATHS = [
+    ENERGY_FUTURES_DEFAULT_PATH,
+    "/Users/tazo/Desktop/macro ouputs/futures-spreads-clm26-04-23-2026.csv",
+]
 ENERGY_MONTH_CODES = {
     "F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
     "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12,
@@ -4141,6 +4145,17 @@ def _decode_futures_contract(contract):
         }
     except Exception:
         return None
+
+
+def _energy_contract_month_label(contract, long=False):
+    try:
+        meta = _decode_futures_contract(contract)
+        if not meta:
+            return str(contract)
+        fmt = "%b %Y" if long else "%b '%y"
+        return datetime.date(int(meta["year"]), int(meta["month"]), 1).strftime(fmt)
+    except Exception:
+        return str(contract)
 
 
 def _infer_energy_front_contract(sp_rows):
@@ -4227,6 +4242,19 @@ def load_futures_spreads(filepath):
         curve.attrs["front_contract"] = front_contract
         curve.attrs["front_month"] = front_month
         curve.attrs["front_year"] = front_meta["year"]
+        front_price = None
+        try:
+            sa_rows = raw[
+                (raw.get("Type") == "SA") &
+                (raw.get("Leg1").astype(str).str.upper() == front_contract) &
+                (raw.get("Leg3").isna()) &
+                (raw.get("Latest").between(20, 200))
+            ].copy()
+            if not sa_rows.empty:
+                front_price = float(sa_rows.sort_values("Leg2").iloc[0]["Latest"])
+        except Exception:
+            front_price = None
+        curve.attrs["front_price"] = front_price
         return curve
     except Exception:
         return pd.DataFrame()
@@ -5391,7 +5419,17 @@ def make_energy_forward_curve_chart(futures_curve):
     fig = go.Figure()
     if futures_curve is None or futures_curve.empty:
         fig.update_layout(
-            title=dict(text="WTI Forward Spread Curve (vs Front Month) — data unavailable", font_size=13),
+            title=dict(text="Where the Market Thinks Oil Prices Are Heading — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=320,
+        )
+        return fig
+    front_price = _safe_float(futures_curve.attrs.get("front_price"))
+    if front_price is None:
+        fig.update_layout(
+            title=dict(text="Where the Market Thinks Oil Prices Are Heading — front price unavailable", font_size=13),
             template=DARK_TEMPLATE,
             plot_bgcolor=CHART_BG,
             paper_bgcolor=PAPER_BG,
@@ -5399,34 +5437,123 @@ def make_energy_forward_curve_chart(futures_curve):
         )
         return fig
     curve = futures_curve.sort_values("months_out")
+    curve = curve.copy()
+    curve["delivery_label"] = curve["Leg2"].apply(lambda x: _energy_contract_month_label(x, long=True))
+    curve["implied_price"] = front_price + curve["Latest"]
     fig.add_trace(go.Scatter(
-        x=curve["months_out"],
-        y=curve["Latest"],
+        x=curve["delivery_label"],
+        y=curve["implied_price"],
         mode="lines+markers",
-        line=dict(color="#3b82f6", width=2.4),
+        line=dict(color="#34d399", width=2.6),
         marker=dict(color="#fbbf24", size=6),
-        hovertemplate="<b>%{customdata}</b><br>Months out: %{x}<br>Spread: $%{y:.2f}/bbl<extra></extra>",
+        fill="tozeroy",
+        fillcolor="rgba(0,200,150,0.15)",
+        hovertemplate="<b>%{customdata}</b><br>Delivery: %{x}<br>Implied price: $%{y:.2f}/bbl<extra></extra>",
         customdata=curve["contract_label"],
-        name="Spread",
+        name="Implied price",
     ))
     for marker_month in [6, 12, 24, 60]:
         row = _energy_spread_row(curve, marker_month)
         if row is not None:
             fig.add_trace(go.Scatter(
-                x=[row["months_out"]],
-                y=[row["Latest"]],
+                x=[_energy_contract_month_label(row["Leg2"], long=True)],
+                y=[front_price + float(row["Latest"])],
                 mode="markers+text",
                 marker=dict(size=12, color="#34d399", line=dict(color="#e2e8f0", width=1)),
                 text=[f"{marker_month}M"],
                 textposition="top center",
                 name=f"{marker_month}M",
-                hovertemplate=f"{marker_month}M<br>Spread: $%{{y:.2f}}/bbl<extra></extra>",
+                hovertemplate=f"{marker_month}M<br>Implied price: $%{{y:.2f}}/bbl<extra></extra>",
             ))
-    fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    fig.add_hline(
+        y=front_price,
+        line_color="#94a3b8",
+        line_width=1,
+        line_dash="dash",
+        annotation_text=f"Today ~${front_price:.2f}",
+        annotation_position="top right",
+    )
     fig.update_layout(
-        title=dict(text="WTI Forward Spread Curve (vs Front Month)", font_size=13),
-        xaxis=dict(title="Months Out", range=[0, 114]),
-        yaxis_title="Latest Spread ($/bbl)",
+        title=dict(text="Where the Market Thinks Oil Prices Are Heading", font_size=13),
+        xaxis_title="Delivery Month",
+        yaxis_title="Price ($/bbl)",
+        template=DARK_TEMPLATE,
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=PAPER_BG,
+        height=360,
+        margin=dict(l=50, r=30, t=45, b=45),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_energy_price_range_chart(futures_curve):
+    fig = go.Figure()
+    if futures_curve is None or futures_curve.empty:
+        fig.update_layout(
+            title=dict(text="Oil Price Forecast — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=360,
+        )
+        return fig
+    front_price = _safe_float(futures_curve.attrs.get("front_price"))
+    if front_price is None:
+        fig.update_layout(
+            title=dict(text="Oil Price Forecast — front price unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=360,
+        )
+        return fig
+    curve = futures_curve[(futures_curve["months_out"] >= 1) & (futures_curve["months_out"] <= 24)].copy()
+    curve = curve.dropna(subset=["Latest", "High", "Low"]).sort_values("months_out")
+    if curve.empty:
+        fig.update_layout(
+            title=dict(text="Oil Price Forecast — range data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=360,
+        )
+        return fig
+    curve["delivery_label"] = curve["Leg2"].apply(lambda x: _energy_contract_month_label(x, long=False))
+    curve["implied_low"] = front_price + curve["Low"]
+    curve["implied_high"] = front_price + curve["High"]
+    curve["implied_latest"] = front_price + curve["Latest"]
+    fig.add_trace(go.Scatter(
+        x=curve["delivery_label"],
+        y=curve["implied_low"],
+        mode="lines",
+        line=dict(color="rgba(148,163,184,0.35)", width=1),
+        name="Low range",
+        hovertemplate="Low: $%{y:.2f}/bbl<br>%{x}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=curve["delivery_label"],
+        y=curve["implied_high"],
+        mode="lines",
+        line=dict(color="rgba(148,163,184,0.35)", width=1),
+        fill="tonexty",
+        fillcolor="rgba(59,130,246,0.18)",
+        name="High range",
+        hovertemplate="High: $%{y:.2f}/bbl<br>%{x}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=curve["delivery_label"],
+        y=curve["implied_latest"],
+        mode="lines+markers",
+        line=dict(color="#fbbf24", width=2.4),
+        marker=dict(color="#fbbf24", size=5),
+        name="Latest implied price",
+        hovertemplate="Latest: $%{y:.2f}/bbl<br>%{x}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text="Oil Price Forecast — Market's Expected Range", font_size=13),
+        xaxis_title="Delivery Month",
+        yaxis_title="Price ($/bbl)",
         template=DARK_TEMPLATE,
         plot_bgcolor=CHART_BG,
         paper_bgcolor=PAPER_BG,
@@ -5441,36 +5568,61 @@ def make_energy_near_term_spreads_chart(futures_curve):
     fig = go.Figure()
     if futures_curve is None or futures_curve.empty:
         fig.update_layout(
-            title=dict(text="Near-Term WTI Spreads — data unavailable", font_size=13),
+            title=dict(text="How Much Extra Each Month Costs — data unavailable", font_size=13),
             template=DARK_TEMPLATE,
             plot_bgcolor=CHART_BG,
             paper_bgcolor=PAPER_BG,
             height=320,
         )
         return fig
+    front_price = _safe_float(futures_curve.attrs.get("front_price"))
     near = futures_curve[(futures_curve["months_out"] >= 1) & (futures_curve["months_out"] <= 18)].copy()
-    near = near.sort_values("months_out", ascending=False)
-    colors = ["#34d399" if (chg or 0) > 0 else "#f87171" if (chg or 0) < 0 else "#94a3b8" for chg in near["Change"]]
+    near = near.sort_values("months_out")
+    if near.empty:
+        fig.update_layout(
+            title=dict(text="How Much Extra Each Month Costs — near-term data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=360,
+        )
+        return fig
+    near["delivery_label"] = near["Leg2"].apply(lambda x: _energy_contract_month_label(x, long=False))
+    near["monthly_step"] = near["Latest"].diff().fillna(near["Latest"])
+    near["implied_price"] = (front_price + near["Latest"]) if front_price is not None else np.nan
+    colors = ["#34d399" if step > 0 else "#f87171" if step < 0 else "#94a3b8" for step in near["monthly_step"]]
     fig.add_trace(go.Bar(
-        x=near["Latest"],
-        y=near["contract_label"],
-        orientation="h",
+        x=near["delivery_label"],
+        y=near["monthly_step"],
         marker_color=colors,
-        text=[f"${v:.2f}" for v in near["Latest"]],
+        text=[f"${v:+.2f}" for v in near["monthly_step"]],
         textposition="outside",
-        hovertemplate="<b>%{y}</b><br>Spread: $%{x:.2f}/bbl<br>Daily change: %{customdata:+.2f}<extra></extra>",
-        customdata=near["Change"],
+        hovertemplate="<b>%{x}</b><br>Monthly step: $%{y:+.2f}/bbl<br>Implied price: $%{customdata:.2f}/bbl<extra></extra>",
+        customdata=near["implied_price"],
     ))
-    fig.add_vline(x=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    try:
+        peak = near.iloc[near["monthly_step"].abs().argmax()]
+        fig.add_annotation(
+            x=peak["delivery_label"],
+            y=peak["monthly_step"],
+            text="Biggest near-term storage premium",
+            showarrow=True,
+            arrowcolor="#fbbf24",
+            font=dict(color="#fbbf24", size=11),
+            yshift=20,
+        )
+    except Exception:
+        pass
     fig.update_layout(
-        title=dict(text="Near-Term WTI Spreads (1-18 Months)", font_size=13),
-        xaxis_title="Latest Spread ($/bbl)",
-        yaxis_title="",
+        title=dict(text="How Much Extra Each Month Costs (Near-Term)", font_size=13),
+        xaxis_title="Delivery Month",
+        yaxis_title="$/bbl gained vs prior month",
         template=DARK_TEMPLATE,
         plot_bgcolor=CHART_BG,
         paper_bgcolor=PAPER_BG,
-        height=420,
-        margin=dict(l=120, r=50, t=45, b=40),
+        height=360,
+        margin=dict(l=50, r=30, t=45, b=45),
         showlegend=False,
     )
     return fig
@@ -5489,26 +5641,149 @@ def make_energy_wti_brent_chart(futures_curve):
         )
         return fig
     plot_df = is_rows.dropna(subset=["Latest"]).head(24).copy()
+    if plot_df.empty:
+        fig.update_layout(
+            title=dict(text="WTI vs Brent Intermarket Spread — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=300,
+        )
+        return fig
+    plot_df["delivery_label"] = plot_df["Leg2"].apply(lambda x: _energy_contract_month_label(x, long=False))
     colors = ["#f87171" if v < 0 else "#34d399" for v in plot_df["Latest"]]
+    fig.add_hrect(y0=-3, y1=0, fillcolor="rgba(148,163,184,0.14)", line_width=0)
+    fig.add_hrect(y0=-7, y1=-3, fillcolor="rgba(251,191,36,0.16)", line_width=0)
+    fig.add_hrect(y0=-50, y1=-7, fillcolor="rgba(248,113,113,0.18)", line_width=0)
     fig.add_trace(go.Bar(
-        x=plot_df["contract_label"],
+        x=plot_df["delivery_label"],
         y=plot_df["Latest"],
         marker_color=colors,
         text=[f"${v:.2f}" for v in plot_df["Latest"]],
         textposition="outside",
-        hovertemplate="<b>%{x}</b><br>WTI-Brent: $%{y:.2f}/bbl<br>Daily change: %{customdata:+.2f}<extra></extra>",
-        customdata=plot_df["Change"],
+        hovertemplate="WTI is $%{customdata[0]:.2f} cheaper than Brent for %{x}<br>Daily change: %{customdata[1]:+.2f}<extra></extra>",
+        customdata=np.column_stack([plot_df["Latest"].abs(), plot_df["Change"].fillna(0)]),
+    ))
+    fig.add_trace(go.Scatter(
+        x=[plot_df["delivery_label"].iloc[-1]],
+        y=[-1.5],
+        mode="text",
+        text=["Normal discount"],
+        textfont=dict(color="#94a3b8", size=11),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=[plot_df["delivery_label"].iloc[-1]],
+        y=[-5],
+        mode="text",
+        text=["Growing discount, watch"],
+        textfont=dict(color="#fbbf24", size=11),
+        hoverinfo="skip",
+        showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=[plot_df["delivery_label"].iloc[-1]],
+        y=[-8.5],
+        mode="text",
+        text=["Large US glut or pipeline stress"],
+        textfont=dict(color="#f87171", size=11),
+        hoverinfo="skip",
+        showlegend=False,
     ))
     fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
     fig.update_layout(
-        title=dict(text="WTI vs Brent Intermarket Spread", font_size=13),
-        xaxis_title="Contract Pair",
-        yaxis_title="Spread ($/bbl)",
+        title=dict(text="US Oil (WTI) vs Global Oil (Brent) — Price Gap", font_size=13),
+        xaxis_title="Delivery Month",
+        yaxis_title="WTI discount to Brent ($/bbl)",
         template=DARK_TEMPLATE,
         plot_bgcolor=CHART_BG,
         paper_bgcolor=PAPER_BG,
-        height=320,
-        margin=dict(l=50, r=30, t=45, b=90),
+        height=360,
+        margin=dict(l=50, r=30, t=45, b=70),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_energy_signal_scorecard_chart(futures_curve):
+    fig = go.Figure()
+    if futures_curve is None or futures_curve.empty:
+        fig.update_layout(
+            title=dict(text="Oil Market 3-Signal Summary — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=220,
+        )
+        return fig
+    row_1m = _energy_spread_row(futures_curve, 1)
+    row_6m = _energy_spread_row(futures_curve, 6)
+    is_rows = futures_curve.attrs.get("intermarket", pd.DataFrame())
+    front_contract = str(futures_curve.attrs.get("front_contract", "")).upper()
+    front_is = None
+    if isinstance(is_rows, pd.DataFrame) and not is_rows.empty:
+        rows = is_rows[is_rows["Leg1"].astype(str).str.upper() == front_contract]
+        if not rows.empty:
+            front_is = rows.iloc[0]
+
+    spread_1m = _safe_float(row_1m.get("Latest")) if row_1m is not None else None
+    spread_6m = _safe_float(row_6m.get("Latest")) if row_6m is not None else None
+    wti_brent = _safe_float(front_is.get("Latest")) if front_is is not None else None
+
+    def _score_curve(v):
+        if v is None:
+            return 0, "#94a3b8", "N/A"
+        if v < 0:
+            return min(abs(v) * 12, 100), "#f87171", f"{v:+.2f} supply squeeze"
+        return min(v * 12, 100), "#fbbf24" if v <= 5 else "#f87171", f"{v:+.2f} contango / oversupply"
+
+    def _score_steep(v):
+        if v is None:
+            return 0, "#94a3b8", "N/A"
+        if v > 15:
+            return min(v * 4, 100), "#f87171", f"{v:+.2f} deep contango"
+        if v >= 5:
+            return min(v * 4, 100), "#fbbf24", f"{v:+.2f} moderate"
+        return min(v * 4, 100), "#34d399", f"{v:+.2f} flat"
+
+    def _score_gap(v):
+        if v is None:
+            return 0, "#94a3b8", "N/A"
+        if v < -7:
+            return min(abs(v) * 8, 100), "#f87171", f"{v:+.2f} large US discount"
+        if v <= -3:
+            return min(abs(v) * 8, 100), "#fbbf24", f"{v:+.2f} normal discount"
+        return min(abs(v) * 8, 100), "#34d399", f"{v:+.2f} watch"
+
+    rows = [
+        ("Curve Shape", *_score_curve(spread_1m)),
+        ("Steepness", *_score_steep(spread_6m)),
+        ("WTI-Brent Gap", *_score_gap(wti_brent)),
+    ]
+    labels = [r[0] for r in rows]
+    scores = [r[1] for r in rows]
+    colors = [r[2] for r in rows]
+    text = [r[3] for r in rows]
+    fig.add_trace(go.Bar(
+        x=scores,
+        y=labels,
+        orientation="h",
+        marker_color=colors,
+        text=text,
+        textposition="inside",
+        insidetextanchor="middle",
+        hovertemplate="<b>%{y}</b><br>%{text}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text="Oil Market 3-Signal Summary", font_size=13),
+        xaxis=dict(title="", range=[0, 100], showticklabels=False),
+        yaxis_title="",
+        template=DARK_TEMPLATE,
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=PAPER_BG,
+        height=220,
+        margin=dict(l=110, r=30, t=45, b=25),
         showlegend=False,
     )
     return fig
@@ -7994,6 +8269,16 @@ def render_energy_futures(futures_curve):
     )
 
     st.divider()
+    st.plotly_chart(
+        make_energy_signal_scorecard_chart(futures_curve),
+        use_container_width=True,
+        key="chart_energy_signal_scorecard",
+    )
+    st.caption(
+        "Start here: this scorecard converts the oil curve, curve steepness, and WTI-Brent gap into plain-language signals."
+    )
+
+    st.divider()
     c1, c2 = st.columns([1.2, 1])
     with c1:
         st.plotly_chart(
@@ -8001,18 +8286,30 @@ def render_energy_futures(futures_curve):
             use_container_width=True,
             key="chart_energy_forward_curve",
         )
+        st.caption("Each point is the implied oil price traders are paying for delivery in that future month.")
     with c2:
+        st.plotly_chart(
+            make_energy_price_range_chart(futures_curve),
+            use_container_width=True,
+            key="chart_energy_price_range",
+        )
+        st.caption("Shaded band shows the high-low range traded for each delivery date; narrower means more agreement.")
+
+    c3, c4 = st.columns(2)
+    with c3:
         st.plotly_chart(
             make_energy_near_term_spreads_chart(futures_curve),
             use_container_width=True,
             key="chart_energy_near_term",
         )
-
-    st.plotly_chart(
-        make_energy_wti_brent_chart(futures_curve),
-        use_container_width=True,
-        key="chart_energy_wti_brent",
-    )
+        st.caption("Positive bars mean the next delivery month costs more than the prior month.")
+    with c4:
+        st.plotly_chart(
+            make_energy_wti_brent_chart(futures_curve),
+            use_container_width=True,
+            key="chart_energy_wti_brent",
+        )
+        st.caption("WTI usually trades below Brent; a very large discount can point to US oversupply or transport bottlenecks.")
 
     with st.expander("Raw cleaned WTI spread rows"):
         st.dataframe(
@@ -10798,8 +11095,11 @@ def main():
     futures_curve = pd.DataFrame()
     if futures_csv is not None:
         futures_curve = load_futures_spreads(futures_csv)
-    elif os.path.exists(ENERGY_FUTURES_DEFAULT_PATH):
-        futures_curve = load_futures_spreads(ENERGY_FUTURES_DEFAULT_PATH)
+    else:
+        for futures_path in ENERGY_FUTURES_DEFAULT_PATHS:
+            if os.path.exists(futures_path):
+                futures_curve = load_futures_spreads(futures_path)
+                break
 
     render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, None, [], None)
     if has_systemic_data_failure(fred, treasury, mkt, fg, naaim, cape):
