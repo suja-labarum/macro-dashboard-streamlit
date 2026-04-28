@@ -595,23 +595,6 @@ FRED_SERIES = {
     "SAHMREALTIME"   : ("Sahm Rule Real-Time",           "Recession", "pts"),
 }
 
-TMOS_DATA_PAGE_URL = "https://www.dallasfed.org/research/surveys/tmos/data"
-TMOS_INDEX_SA_URL = "https://www.dallasfed.org/~/media/Documents/research/surveys/tmos/documents/index_sa.xls"
-TMOS_ALLDATA_SA_URL = "https://www.dallasfed.org/~/media/Documents/research/surveys/tmos/documents/alldata_sa.xls"
-TMOS_INDICATORS = {
-    "production": {"label": "Production", "index_col": "Prod", "prefix": "prod"},
-    "new_orders": {"label": "New Orders", "index_col": "Vnwo", "prefix": "vnwo"},
-    "shipments": {"label": "Shipments", "index_col": "Vshp", "prefix": "vshp"},
-    "capacity_utilization": {"label": "Capacity Utilization", "index_col": "Capu", "prefix": "capu"},
-    "employment": {"label": "Employment", "index_col": "Nemp", "prefix": "nemp"},
-    "prices_paid": {"label": "Prices Paid", "index_col": "Prm", "prefix": "prm"},
-    "prices_received": {"label": "Prices Received", "index_col": "Pfg", "prefix": "pfg"},
-    "wages_benefits": {"label": "Wages and Benefits", "index_col": "Wgs", "prefix": "wgs"},
-    "company_outlook": {"label": "Company Outlook", "index_col": "Colk", "prefix": "colk"},
-    "general_business_activity": {"label": "General Business Activity", "index_col": "Bact", "prefix": "bact"},
-    "outlook_uncertainty": {"label": "Outlook Uncertainty", "index_col": "Uncr", "prefix": "uncr"},
-}
-
 YF_TICKERS = [
     "^GSPC","^IXIC","^DJI","^RUT",
     "ES=F","NQ=F","YM=F","RTY=F",
@@ -1015,178 +998,6 @@ def fetch_fred():
     results["WIMFSL_HIST"] = _fred_hist("WIMFSL", "lin", 52, record_error=False)
     results["DTWEXBGS_HIST"] = _fred_hist("DTWEXBGS", "lin", 52, record_error=False)
     return results
-
-@st.cache_data(ttl="6h")
-def fetch_tmos():
-    def _read_tmos_sheet(raw_bytes, sheet_name):
-        last_error = None
-        for engine in (None, "openpyxl", "xlrd"):
-            try:
-                kwargs = {"sheet_name": sheet_name}
-                if engine is not None:
-                    kwargs["engine"] = engine
-                return pd.read_excel(io.BytesIO(raw_bytes), **kwargs)
-            except Exception as e:
-                last_error = e
-        raise last_error
-
-    def _to_period(value):
-        dt = pd.to_datetime(value, errors="coerce")
-        if pd.isna(dt):
-            dt = pd.to_datetime(value, format="%b-%y", errors="coerce")
-        if pd.isna(dt):
-            return None
-        return dt.strftime("%Y-%m")
-
-    def _safe_num(value):
-        try:
-            if value is None or (isinstance(value, float) and np.isnan(value)):
-                return None
-            text = str(value).strip().replace("–", "-").replace("+", "")
-            return float(text)
-        except Exception:
-            return None
-
-    def _build_payload(index_df, all_df, source_tag, summary_url=None, release_date=None):
-        if index_df is None or index_df.empty:
-            return {}
-
-        index_df = index_df.copy()
-        index_df = index_df.dropna(subset=["Date"])
-        index_df["period"] = index_df["Date"].apply(_to_period)
-        index_df = index_df.dropna(subset=["period"]).reset_index(drop=True)
-        if index_df.empty:
-            return {}
-
-        all_df = all_df.copy() if isinstance(all_df, pd.DataFrame) else pd.DataFrame()
-        if not all_df.empty and "Date" in all_df.columns:
-            all_df = all_df.dropna(subset=["Date"])
-            all_df["period"] = all_df["Date"].apply(_to_period)
-            all_df = all_df.dropna(subset=["period"]).reset_index(drop=True)
-        else:
-            all_df = pd.DataFrame()
-
-        latest_index = index_df.iloc[-1]
-        prev_index = index_df.iloc[-2] if len(index_df) >= 2 else None
-        latest_period = str(latest_index["period"])
-        latest_all = pd.Series(dtype=object)
-        if not all_df.empty:
-            matched = all_df[all_df["period"] == latest_period]
-            latest_all = matched.iloc[-1] if not matched.empty else all_df.iloc[-1]
-
-        current = {}
-        history = {}
-        for key, meta in TMOS_INDICATORS.items():
-            index_col = meta["index_col"]
-            prefix = meta["prefix"]
-
-            if index_col in index_df.columns:
-                hist_df = index_df[["period", index_col]].copy()
-                hist_df[index_col] = pd.to_numeric(hist_df[index_col], errors="coerce")
-                hist_df = hist_df.dropna(subset=[index_col])
-                history[key] = [
-                    (float(row[index_col]), str(row["period"]))
-                    for _, row in hist_df.iterrows()
-                ]
-            else:
-                history[key] = []
-
-            value = _safe_num(latest_index.get(index_col))
-            prev_value = _safe_num(prev_index.get(index_col)) if prev_index is not None else None
-            current[key] = {
-                "label": meta["label"],
-                "value": value,
-                "previous": prev_value,
-                "change": (value - prev_value) if value is not None and prev_value is not None else None,
-                "period": latest_period,
-                "increase_pct": _safe_num(latest_all.get(f"{prefix}i")) if not latest_all.empty else None,
-                "no_change_pct": _safe_num(latest_all.get(f"{prefix}n")) if not latest_all.empty else None,
-                "decrease_pct": _safe_num(latest_all.get(f"{prefix}d")) if not latest_all.empty else None,
-            }
-
-        return {
-            "source_tag": source_tag,
-            "quality": "release",
-            "date": release_date or f"{latest_period}-01",
-            "period": latest_period,
-            "summary_url": summary_url,
-            "historical_url": TMOS_DATA_PAGE_URL,
-            "current": current,
-            "history": history,
-        }
-
-    try:
-        index_raw = _http_get(TMOS_INDEX_SA_URL, timeout=20)
-        all_raw = _http_get(TMOS_ALLDATA_SA_URL, timeout=20)
-        index_df = _read_tmos_sheet(index_raw, "Indexes Seasonally Adjusted")
-        all_df = _read_tmos_sheet(all_raw, "All Data Seasonally Adjusted")
-        return _build_payload(index_df, all_df, "Dallas Fed TMOS XLS")
-    except Exception:
-        pass
-
-    try:
-        data_page = _http_get_text(TMOS_DATA_PAGE_URL, timeout=15)
-        report_match = re.search(r'href="(?P<path>/research/surveys/tmos/\d{4}/\d{4}/\d{4}summ)"', data_page)
-        summary_url = (
-            f"https://www.dallasfed.org{report_match.group('path')}"
-            if report_match else
-            "https://www.dallasfed.org/research/surveys/tmos"
-        )
-        summary_html = _http_get_text(summary_url, timeout=15)
-        tables = pd.read_html(io.StringIO(summary_html))
-        if not tables:
-            return {}
-
-        headline = tables[0].copy()
-        headline.columns = headline.iloc[1]
-        headline = headline.iloc[2:].reset_index(drop=True)
-        headline = headline.rename(columns={headline.columns[0]: "Indicator"})
-
-        release_match = re.search(
-            r"Texas Manufacturing Outlook Survey.*?([A-Z][a-z]+ \d{1,2}, \d{4})",
-            summary_html,
-            flags=re.S,
-        )
-        release_date = None
-        if release_match:
-            parsed_release = pd.to_datetime(release_match.group(1), errors="coerce")
-            if not pd.isna(parsed_release):
-                release_date = parsed_release.strftime("%Y-%m-%d")
-
-        current = {}
-        history = {}
-        label_map = {meta["label"]: key for key, meta in TMOS_INDICATORS.items()}
-        for _, row in headline.iterrows():
-            raw_label = str(row.get("Indicator", "")).strip()
-            key = label_map.get(raw_label)
-            if not key:
-                continue
-            current[key] = {
-                "label": raw_label,
-                "value": _safe_num(row.get(headline.columns[1])),
-                "previous": _safe_num(row.get(headline.columns[2])),
-                "change": _safe_num(row.get("Change")),
-                "period": release_date[:7] if release_date else None,
-                "increase_pct": _safe_num(row.get("% Reporting Increase")),
-                "no_change_pct": _safe_num(row.get("% Reporting No Change")),
-                "decrease_pct": _safe_num(row.get("% Reporting Decrease")),
-            }
-            history[key] = []
-
-        if not current:
-            return {}
-        return {
-            "source_tag": "Dallas Fed TMOS summary page",
-            "quality": "page-fallback",
-            "date": release_date,
-            "period": release_date[:7] if release_date else None,
-            "summary_url": summary_url,
-            "historical_url": TMOS_DATA_PAGE_URL,
-            "current": current,
-            "history": history,
-        }
-    except Exception:
-        return {}
 
 @st.cache_data(ttl="1h")
 def fetch_treasury():
@@ -4308,34 +4119,8 @@ def _hist_latest(fred, key):
     return values[-1] if values else None
 
 
-def _tmos_hist_points(tmos, key, ascending=True):
-    rows = []
-    for item in ((tmos or {}).get("history", {}) or {}).get(key, []) or []:
-        try:
-            value, date = item
-            value = float(value)
-            rows.append({"date": str(date), "value": value})
-        except Exception:
-            continue
-    rows = list(reversed(rows)) if not ascending else rows
-    return rows
-
-
-def _tmos_delta(tmos, key, periods=1):
-    values = [p["value"] for p in _tmos_hist_points(tmos, key, ascending=True)]
-    if len(values) <= periods:
-        return None
-    return values[-1] - values[-1 - periods]
-
-
-def _tmos_value_color(value):
-    if value is None:
-        return "#94a3b8"
-    return "#34d399" if float(value) >= 0 else "#f87171"
-
-
 ENERGY_FUTURES_DEFAULT_PATH = os.path.join(
-    BASE_DIR, "data", "futures-spreads-clm26-04-23-2026.csv"
+    BASE_DIR, "..", "data", "futures-spreads-clm26-04-23-2026.csv"
 )
 ENERGY_FUTURES_DEFAULT_PATHS = [
     ENERGY_FUTURES_DEFAULT_PATH,
@@ -4702,7 +4487,7 @@ def compute_gs_style_composites(fred, mkt, fg=None, opts=None, cape=None):
     }
 
 
-def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bls, tmos=None):
+def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bls):
     critical_checks = [
         ("GDPNow", _get_val(fred, "GDPNOW") or _get_val(fred, "A191RL1Q225SBEA")),
         ("CPI", _get_val(fred, "CPIAUCSL")),
@@ -4725,7 +4510,6 @@ def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bl
             ("Fear & Greed", 1 if fg else 0, fg.get("source_tag", "missing") if fg else "missing"),
             ("NAAIM", 1 if naaim else 0, naaim.get("date", "missing") if naaim else "missing"),
             ("CAPE", 1 if cape else 0, cape.get("quality", "missing") if cape else "missing"),
-            ("Dallas Fed TMOS", len((tmos or {}).get("current", {}) or {}), (tmos or {}).get("source_tag", "missing") if tmos else "missing"),
             ("AAII", 1 if aaii else 0, aaii.get("date", "missing") if aaii else "missing"),
             ("BLS", 1 if bls else 0, "ok" if bls else "missing"),
             ("Alpha Vantage", len(news), "api key set" if _has_key(ALPHA_VANTAGE_KEY) else "no api key"),
@@ -4755,7 +4539,6 @@ def render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, aaii, news, bl
             ("13F institutional holdings", "SEC EDGAR / Finnhub fallback", "Official/proxy mix", "SEC is official but quarterly and delayed; Finnhub is a normalized third-party transport."),
             ("ICI fund flows", "ICI public XLS", "Primary publisher", "ICI is the industry publisher for these flow estimates."),
             ("GDPNow", "Atlanta Fed page/FRED fallback", "Primary publisher", "Model nowcast; Atlanta Fed states it is not an official Fed forecast."),
-            ("Texas manufacturing survey", "Dallas Fed official XLS + summary-page fallback", "Primary publisher", "Regional manufacturing diffusion survey for Texas factory conditions."),
             ("Fear & Greed", "CNN dataviz endpoint/page scrape", "Publisher endpoint", "CNN is the publisher, but the JSON endpoint is unsupported and can change."),
             ("AAII sentiment", "AAII public pages", "Primary publisher", "AAII is the survey publisher."),
             ("NAAIM exposure", "NAAIM public page", "Primary publisher", "NAAIM is the survey publisher."),
@@ -5294,98 +5077,6 @@ def make_fred_history_line_chart(fred, key, title, y_title="", color="#3b82f6", 
         xaxis_title="Date", yaxis_title=y_title,
         template=DARK_TEMPLATE, plot_bgcolor=CHART_BG, paper_bgcolor=PAPER_BG,
         height=260, margin=dict(l=45, r=20, t=45, b=30),
-    )
-    return fig
-
-
-def make_tmos_history_chart(tmos, indicator_keys=None, title="Texas Manufacturing Outlook Survey — 24-Month History"):
-    indicator_keys = indicator_keys or ["production", "new_orders", "employment"]
-    palette = {
-        "production": "#3b82f6",
-        "new_orders": "#22c55e",
-        "employment": "#f59e0b",
-        "prices_paid": "#f87171",
-        "general_business_activity": "#a78bfa",
-    }
-    fig = go.Figure()
-    plotted = 0
-    for key in indicator_keys:
-        points = _tmos_hist_points(tmos, key, ascending=True)[-24:]
-        if not points:
-            continue
-        label = ((tmos or {}).get("current", {}) or {}).get(key, {}).get("label") or key.replace("_", " ").title()
-        fig.add_trace(go.Scatter(
-            x=[p["date"] for p in points],
-            y=[p["value"] for p in points],
-            mode="lines+markers",
-            line=dict(color=palette.get(key, "#3b82f6"), width=2),
-            marker=dict(size=5, color=palette.get(key, "#3b82f6")),
-            name=label,
-            hovertemplate=f"{label}<br>%{{x}}<br>%{{y:.1f}}<extra></extra>",
-        ))
-        plotted += 1
-    if plotted == 0:
-        fig.update_layout(title=f"{title} — insufficient data")
-    else:
-        fig.add_hline(y=0, line_color="#94a3b8", line_dash="dash", line_width=1)
-    fig.update_layout(
-        title=dict(text=title, font_size=13),
-        xaxis_title="Month",
-        yaxis_title="Diffusion Index",
-        template=DARK_TEMPLATE,
-        plot_bgcolor=CHART_BG,
-        paper_bgcolor=PAPER_BG,
-        height=300,
-        margin=dict(l=45, r=20, t=45, b=30),
-        legend=dict(orientation="h", y=1.12),
-    )
-    return fig
-
-
-def make_tmos_current_bar_chart(tmos, indicator_keys=None, title="Texas Manufacturing Outlook Survey — Latest Indexes"):
-    indicator_keys = indicator_keys or [
-        "production",
-        "new_orders",
-        "shipments",
-        "employment",
-        "prices_paid",
-        "general_business_activity",
-    ]
-    current = ((tmos or {}).get("current", {}) or {})
-    labels, values, colors = [], [], []
-    for key in indicator_keys:
-        item = current.get(key) or {}
-        value = item.get("value")
-        if value is None:
-            continue
-        labels.append(item.get("label") or key.replace("_", " ").title())
-        values.append(float(value))
-        colors.append(_tmos_value_color(value))
-
-    fig = go.Figure()
-    if labels:
-        fig.add_trace(go.Bar(
-            x=values,
-            y=labels,
-            orientation="h",
-            marker_color=colors,
-            text=[f"{v:.1f}" for v in values],
-            textposition="outside",
-            hovertemplate="%{y}<br>%{x:.1f}<extra></extra>",
-        ))
-        fig.add_vline(x=0, line_color="#94a3b8", line_dash="dash", line_width=1)
-    else:
-        fig.update_layout(title=f"{title} — insufficient data")
-
-    fig.update_layout(
-        title=dict(text=title, font_size=13),
-        xaxis_title="Index Level",
-        yaxis_title="",
-        template=DARK_TEMPLATE,
-        plot_bgcolor=CHART_BG,
-        paper_bgcolor=PAPER_BG,
-        height=300,
-        margin=dict(l=45, r=20, t=45, b=30),
     )
     return fig
 
@@ -10621,7 +10312,6 @@ def export_snapshot_to_json():
     aaii = fetch_aaii()
     news = fetch_news()
     worldmonitor_news = fetch_worldmonitor_news(per_category=5)
-    tmos = fetch_tmos()
     sofr_data = fetch_sofr_spread()
     amihud_data = fetch_amihud_illiquidity("SPY", lookback=30)
     cot_data = fetch_cot_data()
@@ -10661,7 +10351,6 @@ def export_snapshot_to_json():
         "aaii": aaii,
         "news": news,
         "worldmonitor_news": worldmonitor_news,
-        "tmos": tmos,
         "sofr": sofr_data,
         "amihud": amihud_data,
         "cot_data": cot_data,
@@ -11404,7 +11093,6 @@ def main():
         fg = fetch_fear_greed()
         naaim = fetch_naaim()
         cape = fetch_shiller_cape()
-        tmos = fetch_tmos()
         status.update(label="✅ Core dashboard ready", state="complete", expanded=False)
 
     futures_curve = pd.DataFrame()
@@ -11416,7 +11104,7 @@ def main():
                 futures_curve = load_futures_spreads(futures_path)
                 break
 
-    render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, None, [], None, tmos=tmos)
+    render_data_diagnostics(fred, treasury, mkt, fg, naaim, cape, None, [], None)
     if has_systemic_data_failure(fred, treasury, mkt, fg, naaim, cape):
         st.error(
             "Most live feeds are currently unavailable. Check internet/DNS access first, then verify your API keys in the sidebar."
@@ -11529,7 +11217,7 @@ def main():
         with tab_map["🏦 Macro Overview"]:
             _render_section_refresh(
                 "macro_overview",
-                [fetch_fred, fetch_treasury, fetch_market, fetch_fear_greed, fetch_naaim, fetch_shiller_cape, fetch_tmos],
+                [fetch_fred, fetch_treasury, fetch_market, fetch_fear_greed, fetch_naaim, fetch_shiller_cape],
             )
             render_tab_summary("🏦 Macro Overview", fred, treasury=treasury, mkt=mkt, fg=fg, naaim=naaim, cape=cape)
             render_macro_alerts(fred, futures_curve)
@@ -11599,50 +11287,6 @@ def main():
                         f'<span style="color:{c};font-weight:600">{_fmt(v,unit)}</span></div>',
                         unsafe_allow_html=True,
                     )
-
-            st.divider()
-            st.subheader("Texas Manufacturing Outlook Survey")
-            st.caption(
-                "Official Dallas Fed regional factory survey. Positive diffusion indexes mean more Texas manufacturers "
-                "reported improvement than deterioration versus the prior month."
-            )
-            tmos_current = (tmos or {}).get("current", {}) or {}
-            tmos_metric_keys = [
-                "production",
-                "new_orders",
-                "employment",
-                "prices_paid",
-                "general_business_activity",
-            ]
-            tm_cols = st.columns(len(tmos_metric_keys))
-            for col, key in zip(tm_cols, tmos_metric_keys):
-                item = tmos_current.get(key) or {}
-                value = item.get("value")
-                delta = item.get("change")
-                col.metric(
-                    item.get("label", key.replace("_", " ").title()),
-                    f"{value:.1f}" if value is not None else "N/A",
-                    delta=f"{delta:+.1f} vs prior month" if delta is not None else None,
-                    delta_color="normal" if value is not None and value >= 0 else "inverse",
-                )
-            tm1, tm2 = st.columns([1.1, 1])
-            with tm1:
-                st.plotly_chart(
-                    make_tmos_current_bar_chart(tmos),
-                    use_container_width=True,
-                    key="chart_tmos_current_bar",
-                )
-            with tm2:
-                st.plotly_chart(
-                    make_tmos_history_chart(tmos),
-                    use_container_width=True,
-                    key="chart_tmos_history",
-                )
-            if tmos:
-                latest_period = tmos.get("period") or "N/A"
-                source_tag = tmos.get("source_tag", "Dallas Fed")
-                source_url = tmos.get("summary_url") or tmos.get("historical_url") or TMOS_DATA_PAGE_URL
-                st.caption(f"Latest period: {latest_period} · Source: [{source_tag}]({source_url})")
 
     # ── TAB 2: LABOR & CONSUMER ────────────────────────────────────────────
     if "💼 Labor & Consumer" in tab_map:

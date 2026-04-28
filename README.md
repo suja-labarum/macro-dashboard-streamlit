@@ -23,3 +23,4 @@ streamlit run app.py
 
 - Some feeds work without API keys, but API-backed sections need secrets.
 - The AI Macro Analysis section uses local Codex CLI on your Mac. It will not run on Streamlit Cloud unless the cloud runtime has Codex CLI available.
+- The energy futures section includes a repository-local CSV fallback at `data/futures-spreads-clm26-04-23-2026.csv`.
