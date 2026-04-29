@@ -27,7 +27,7 @@
 """
 
 import os, json, time, datetime, threading, io, re, ssl, sys, subprocess, shutil
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -2136,6 +2136,83 @@ def fetch_13f_aggregate(top_n=10):
         except Exception:
             pass
         return None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)
+def fetch_eia_crude_inventory():
+    """
+    Fetches weekly U.S. crude oil ending stocks via EIA API v2.
+    Series: product=EPC0, duoarea=NUS (National, thousand barrels).
+    Computes week-over-week change in million barrels.
+    API key resolved via get_api_key() so sidebar/session overrides work too.
+    Returns dict: date, stocks_mb, change_mb, prior_mb, history[], source.
+    Returns None on failure.
+    """
+    try:
+        api_key = get_api_key("EIA_API_KEY") or EIA_API_KEY
+        if not api_key:
+            return None
+
+        url = "https://api.eia.gov/v2/petroleum/stoc/wstk/data/"
+        params = {
+            "api_key": api_key,
+            "frequency": "weekly",
+            "data[0]": "value",
+            "facets[product][]": "EPC0",
+            "facets[duoarea][]": "NUS",
+            "sort[0][column]": "period",
+            "sort[0][direction]": "desc",
+            "length": 54,
+        }
+
+        if _USE_REQUESTS:
+            resp = _requests.get(url, params=params, timeout=20)
+            resp.raise_for_status()
+            payload = resp.json()
+        else:
+            query = urllib.parse.urlencode(params, doseq=True)
+            payload = _http_get_json(f"{url}?{query}", timeout=20)
+        rows = (payload.get("response") or {}).get("data") or []
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        if "period" not in df.columns or "value" not in df.columns:
+            return None
+        df["period"] = pd.to_datetime(df["period"], errors="coerce")
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df = df.dropna(subset=["period", "value"]).sort_values("period").reset_index(drop=True)
+        if len(df) < 3:
+            return None
+
+        df["stocks_mb"] = df["value"] / 1000.0
+        change_kb = df["value"].diff()
+        df["change_mb"] = change_kb / 1000.0
+
+        latest = df.iloc[-1]
+        prior = df.iloc[-2]
+
+        history_df = df.tail(52).copy()
+        history = [
+            {
+                "date": row["period"].strftime("%Y-%m-%d"),
+                "stocks_mb": float(row["stocks_mb"]) if pd.notna(row["stocks_mb"]) else None,
+                "change_mb": float(row["change_mb"]) if pd.notna(row["change_mb"]) else None,
+            }
+            for _, row in history_df.iterrows()
+            if pd.notna(row["change_mb"])
+        ]
+
+        return {
+            "date": latest["period"].strftime("%Y-%m-%d"),
+            "stocks_mb": round(float(latest["stocks_mb"]), 2),
+            "change_mb": round(float(latest["change_mb"]), 2),
+            "prior_mb": round(float(prior["change_mb"]), 2) if pd.notna(prior["change_mb"]) else None,
+            "history": history,
+            "source": "https://api.eia.gov/v2/petroleum/stoc/wstk/data/",
+        }
     except Exception:
         return None
 
@@ -6485,6 +6562,63 @@ def make_energy_wti_brent_chart(futures_curve):
     return fig
 
 
+def make_eia_inventory_chart(inv_data):
+    """
+    Bar chart: weekly EIA crude inventory change (M barrels, 52-week history).
+    Bars: red (#f87171) for builds (positive = bearish),
+          green (#34d399) for draws (negative = bullish).
+    Dashed zero line.
+    Uses DARK_TEMPLATE, CHART_BG, PAPER_BG. Height 300.
+    Title: "U.S. Crude Oil Inventory Change (Weekly, EIA)"
+    """
+    fig = go.Figure()
+    if not inv_data or not inv_data.get("history"):
+        fig.update_layout(
+            title=dict(text="U.S. Crude Oil Inventory Change (Weekly, EIA) — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=300,
+        )
+        return fig
+
+    hist_df = pd.DataFrame(inv_data.get("history", []))
+    if hist_df.empty or "date" not in hist_df.columns or "change_mb" not in hist_df.columns:
+        fig.update_layout(
+            title=dict(text="U.S. Crude Oil Inventory Change (Weekly, EIA) — data unavailable", font_size=13),
+            template=DARK_TEMPLATE,
+            plot_bgcolor=CHART_BG,
+            paper_bgcolor=PAPER_BG,
+            height=300,
+        )
+        return fig
+
+    hist_df["date"] = pd.to_datetime(hist_df["date"], errors="coerce")
+    hist_df["change_mb"] = pd.to_numeric(hist_df["change_mb"], errors="coerce")
+    hist_df = hist_df.dropna(subset=["date", "change_mb"]).sort_values("date").tail(52)
+    colors = ["#f87171" if val > 0 else "#34d399" for val in hist_df["change_mb"]]
+
+    fig.add_trace(go.Bar(
+        x=hist_df["date"],
+        y=hist_df["change_mb"],
+        marker_color=colors,
+        hovertemplate="%{x|%Y-%m-%d}<br>Change: %{y:+.2f} M bbl<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title=dict(text="U.S. Crude Oil Inventory Change (Weekly, EIA)", font_size=13),
+        xaxis_title="Week",
+        yaxis_title="Change (M bbl)",
+        template=DARK_TEMPLATE,
+        plot_bgcolor=CHART_BG,
+        paper_bgcolor=PAPER_BG,
+        height=300,
+        margin=dict(l=40, r=20, t=45, b=35),
+        showlegend=False,
+    )
+    return fig
+
+
 def make_energy_signal_scorecard_chart(futures_curve):
     fig = go.Figure()
     if futures_curve is None or futures_curve.empty:
@@ -9303,6 +9437,44 @@ def _energy_metric_card(title, row=None, warn_red=False, warnred=None):
 
 def render_energy_futures(futures_curve):
     st.subheader("Energy Futures")
+    inv = fetch_eia_crude_inventory()
+    if inv is None:
+        st.warning(
+            "EIA inventory data unavailable. Verify `EIA_API_KEY` in sidebar, "
+            "Streamlit secrets, or environment variables; API/network limits can also cause this."
+        )
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric(
+                "Crude Stocks (Total)",
+                f"{inv.get('stocks_mb', 0):,.0f} M bbl" if inv.get("stocks_mb") is not None else "N/A",
+            )
+        with c2:
+            chg = inv.get("change_mb")
+            prior = inv.get("prior_mb")
+            st.metric(
+                "Weekly Change",
+                f"{chg:+.2f} M bbl" if chg is not None else "N/A",
+                delta=(f"{(chg - prior):+.2f} M bbl" if (chg is not None and prior is not None) else None),
+                delta_color="inverse",
+            )
+        with c3:
+            prior = inv.get("prior_mb")
+            st.metric(
+                "Prior Week Change",
+                f"{prior:+.2f} M bbl" if prior is not None else "N/A",
+            )
+        with c4:
+            st.metric(
+                "Report Date",
+                inv.get("date", "N/A"),
+                help=inv.get("source"),
+            )
+        st.plotly_chart(make_eia_inventory_chart(inv), use_container_width=True, key="chart_eia_inventory")
+        st.caption("Source: EIA Weekly Petroleum Status Report — draws (negative) are bullish for oil prices; builds (positive) are bearish.")
+        st.divider()
+
     source = (futures_curve.attrs.get("source")
               if futures_curve is not None and not futures_curve.empty else None)
     if source == "barchart_live":
@@ -11736,6 +11908,65 @@ def _render_x_intel_theme_gallery(items, key_prefix):
             st.markdown("<div style='height:1px;background:#1f2a3a;margin:12px 0 16px'></div>", unsafe_allow_html=True)
 
 
+def _x_intel_cli_root():
+    candidates = [
+        Path(__file__).resolve().parent,
+        Path.cwd(),
+        Path.home() / "Documents" / "New project 2",
+    ]
+    for candidate in candidates:
+        if (candidate / "cli" / "main.py").exists():
+            return candidate
+    return None
+
+
+def _x_intel_run_refresh(max_images, search_terms, skip_scrape=False):
+    root_dir = _x_intel_cli_root()
+    if root_dir is None:
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": "Could not find cli/main.py from this dashboard version.",
+            "command": "",
+        }
+
+    cli_main = (root_dir / "cli" / "main.py").resolve()
+    command = ["python3", str(cli_main), "run", "--max-images", str(int(max_images))]
+    if skip_scrape:
+        command.append("--skip-scrape")
+    if str(search_terms or "").strip():
+        command.extend(["--search-terms", str(search_terms).strip()])
+
+    env = os.environ.copy()
+    env["MAX_IMAGES"] = str(int(max_images))
+    if str(search_terms or "").strip():
+        env["X_SEARCH_TERMS"] = str(search_terms).strip()
+
+    proc = subprocess.run(
+        command,
+        cwd=root_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    stderr = proc.stderr.strip()
+    stdout = proc.stdout.strip()
+    if proc.returncode != 0 and "SearchTimeline" in f"{stdout}\n{stderr}":
+        stderr = (
+            f"{stderr}\n\nSearchTimeline is currently locked by X/twscrape. "
+            "Wait for the lock to clear or run `twscrape reset_locks` in the project terminal."
+        ).strip()
+
+    return {
+        "ok": proc.returncode == 0,
+        "stdout": stdout,
+        "stderr": stderr,
+        "command": " ".join(command),
+        "root_dir": str(root_dir),
+        "cli_main": str(cli_main),
+    }
+
+
 def make_singlestock_vs_index_vol_chart(ssdata):
     """Line chart: SPX single-stock vs index 3-M implied vol spread over time."""
     import plotly.graph_objects as go
@@ -13238,22 +13469,9 @@ def render_x_intelligence(x_data):
         "Sourced from specific X accounts sharing paid-service data. Run cli/main.py to refresh. "
         "Charts analyzed by Codex CLI vision."
     )
-
-    if not x_data:
-        st.info(
-            "No X intelligence cache found yet. Run `bash cli/setup_twscrape.sh` once, then "
-            "`python3 cli/main.py run` to populate `~/.macro_dashboard/x_intel_analyzed.json`."
-        )
-        return
-
     analyzed = x_data.get("analyzed", []) if isinstance(x_data, dict) else (x_data or [])
     posts = x_data.get("posts", []) if isinstance(x_data, dict) else []
-    if not analyzed and not posts:
-        st.info(
-            "No X intelligence cache found yet. Run `bash cli/setup_twscrape.sh` once, then "
-            "`python3 cli/main.py run` to populate `~/.macro_dashboard/x_intel_analyzed.json`."
-        )
-        return
+    has_data = bool(analyzed or posts)
 
     trend_colors = {
         "bullish": ("#22c55e", "rgba(34,197,94,0.14)"),
@@ -13301,11 +13519,69 @@ def render_x_intelligence(x_data):
         st.markdown(
             "<div style='background:#141923;border:1px solid #1f2a3a;border-radius:12px;padding:14px 16px;'>"
             "<div style='color:#8b95a7;font-size:11px;text-transform:uppercase;letter-spacing:.08em'>Refresh</div>"
-            "<div style='color:#e6edf3;font-size:14px;font-weight:600;margin-top:6px'>Run CLI to refresh</div>"
-            "<div style='color:#8b95a7;font-size:12px;margin-top:8px'><code>python3 cli/main.py</code></div>"
+            "<div style='color:#e6edf3;font-size:14px;font-weight:600;margin-top:6px'>Run scrape + search here</div>"
+            "<div style='color:#8b95a7;font-size:12px;margin-top:8px'><code>python3 cli/main.py run</code></div>"
             "</div>",
             unsafe_allow_html=True,
         )
+        st.text_input(
+            "Search terms",
+            key="x_intel_search_terms",
+            value=st.session_state.get("x_intel_search_terms", "CTA-s, CTAs"),
+            help="Comma-separated X search phrases. Example: CTA-s, CTAs, spotgamma",
+        )
+        st.number_input(
+            "Max images",
+            min_value=1,
+            max_value=100,
+            value=int(st.session_state.get("x_intel_max_images", 20)),
+            step=1,
+            key="x_intel_max_images",
+            help="Maximum number of chart images to analyze during this run.",
+        )
+        run_cols = st.columns(2, gap="small")
+        with run_cols[0]:
+            run_full = st.button("Run Scrape", key="x_intel_run_scrape", use_container_width=True)
+        with run_cols[1]:
+            run_analyze = st.button("Analyze Only", key="x_intel_run_analyze", use_container_width=True)
+
+        if run_full or run_analyze:
+            with st.spinner("Running X scrape/search pipeline…"):
+                result = _x_intel_run_refresh(
+                    max_images=st.session_state.get("x_intel_max_images", 20),
+                    search_terms=st.session_state.get("x_intel_search_terms", "CTA-s, CTAs"),
+                    skip_scrape=run_analyze,
+                )
+            st.session_state["x_intel_refresh_result"] = result
+            if result.get("ok"):
+                try:
+                    fetch_x_intelligence.clear()
+                except Exception:
+                    pass
+                st.rerun()
+
+        last_result = st.session_state.get("x_intel_refresh_result")
+        if last_result:
+            if last_result.get("ok"):
+                st.success("X scrape/search refresh completed.")
+            else:
+                st.error(last_result.get("stderr") or "X refresh failed.")
+            with st.expander("Refresh Logs", expanded=False):
+                st.caption(last_result.get("command", ""))
+                st.caption(f"Project root: {last_result.get('root_dir', 'N/A')}")
+                st.caption(f"CLI script: {last_result.get('cli_main', 'N/A')}")
+                if last_result.get("stdout"):
+                    st.code(last_result["stdout"])
+                if last_result.get("stderr"):
+                    st.code(last_result["stderr"])
+
+    if not has_data:
+        st.info(
+            "No X intelligence cache found yet. Use the refresh controls above or run "
+            "`bash cli/setup_twscrape.sh` once, then `python3 cli/main.py run` to populate "
+            "`~/.macro_dashboard/x_intel_analyzed.json`."
+        )
+        return
 
     cta_item = _x_intel_latest_theme_entry(analyzed, "cta")
     gamma_item = _x_intel_latest_theme_entry(analyzed, "optiongamma")
